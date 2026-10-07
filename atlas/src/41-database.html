@@ -1,0 +1,164 @@
+
+<section class="doc" id="database" data-group="Backend services" data-title="Database">
+  <header>
+    <p class="eyebrow"><span>src/apis/PreciseRx-Database</span><span>Python 3.12</span><span>Flask 3</span><span>/database/v1</span></p>
+    <h2>PreciseRx-Database</h2>
+    <p class="summary">Database is the data-access API. Patients, cases, doses, levels, PK parameters, notes, settings and the audit trail all live in MySQL, with one schema per customer institution. The service also answers license, SSO and EHR-tenant lookups from a shared <code>licenseinfo</code> schema. The browser calls it directly, and so do Main and Databridge.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Framework</dt><dd>Flask 3.1, Werkzeug 3.1, Flask-Cors 6</dd></div>
+    <div><dt>Server</dt><dd>gunicorn 23; default of 1 sync worker, 30 s timeout</dd></div>
+    <div><dt>ORM</dt><dd>SQLAlchemy 2.0 + PyMySQL</dd></div>
+    <div><dt>Database</dt><dd>MySQL (Aurora reader and writer)</dd></div>
+    <div><dt>Migrations</dt><dd>None in this repo</dd></div>
+    <div><dt>Routes</dt><dd>~100 method and path pairs</dd></div>
+    <div><dt>Local</dt><dd>DB-Server, host :8001</dd></div>
+    <div><dt>Tests</dt><dd>39 pytest files, ~310 tests</dd></div>
+  </dl>
+
+  <h3 id="db-layout">Layout</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td class="path">manage.py, gunicorn.conf.py</td><td>Entry point (<code>manage:app</code>) and gunicorn config: bind address and JSON access logs.</td></tr>
+      <tr><td class="path">app/__init__.py</td><td>The <code>create_app</code> factory: middleware chains per blueprint, 19 blueprints, CORS, <code>/HealthCheck</code>, the Valkey ping at boot.</td></tr>
+      <tr><td class="path">app/database/</td><td><code>secrets.py</code> (credentials from Secrets Manager, cached) and <code>engine.py</code> (one engine per schema, with password-rotation retry).</td></tr>
+      <tr><td class="path">app/middlewares/</td><td>Token validation, roles, revocation, XSS screen, API keys, session open and close, the edit-history audit, client IP, no-cache headers.</td></tr>
+      <tr><td class="path">app/models/hospital/</td><td>About 45 ORM classes for the per-institution schema.</td></tr>
+      <tr><td class="path">app/models/licenseinfo/, serverinfo/</td><td>The shared license schema and a legacy server schema.</td></tr>
+      <tr><td class="path">app/models/redux/</td><td>Serializers that reshape rows into the frontend's Redux store shape.</td></tr>
+      <tr><td class="path">app/routes/dataaccess/</td><td>Every live route, grouped by area.</td></tr>
+      <tr><td class="path">app/routes/admin/</td><td>License and database admin routes, unmounted since RX-3627.</td></tr>
+      <tr><td class="path">test/</td><td>pytest suite mirroring <code>app/</code>, with fixtures in <code>conftest.py</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="db-request">What happens on each request</h3>
+  <ol class="steps">
+    <li>An XSS regex screen on the body and headers.</li>
+    <li>A session on <code>licenseinfo</code>: the reader endpoint for GET, the writer otherwise (<span class="path">app/middlewares/session.py:66-86</span>).</li>
+    <li>Token validation, then revocation, then the role check (below).</li>
+    <li>A session on the tenant schema, named by the institution ID from the user's license (<span class="path">session.py:40-63</span>).</li>
+    <li>The caller's email is resolved. On first sight it comes from Cognito <code>AdminGetUser</code>, then it is cached for an hour.</li>
+    <li>After the handler runs: the edit-history audit row (for seven endpoints), session close, and no-cache headers.</li>
+  </ol>
+  <p><strong>Connections.</strong> Engines use <code>NullPool</code>, so each request opens at least two fresh MySQL connections. No TLS options are passed to the driver (<span class="path">app/database/engine.py:76-87</span>; no <code>ssl</code> or <code>connect_args</code> anywhere).</p>
+  <p><strong>Credential rotation.</strong> Credentials come from the secret named by <code>RDS_SECRET_ARN</code> and are cached for 60 s. A <code>do_connect</code> hook injects them into every new connection. If MySQL rejects the login with error 1045, the hook re-reads <code>AWSCURRENT</code> uncached and then tries <code>AWSPENDING</code>. That covers the window mid-rotation (<span class="path">engine.py:90-169</span>; <span class="path">secrets.py:89-129</span>).</p>
+
+  <h3 id="db-model">Data model</h3>
+  <p>No migrations or DDL live here, so the ORM is the only description of the schema in this repo. The production schema may differ from it. Tests create tables from the ORM metadata. Ask who owns migrations; a comment points at a License Tool (<span class="path">app/__init__.py:52-54</span>).</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Schema</th><th>Table</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="7">per institution<br><span class="path">(named by institution ID)</span></td><td><code>patients</code></td><td><code>REC_NUM</code> (key), first and last name, birthday, sex, <code>PATIENT_ID</code> (the MRN), free-text <code>NOTE</code>, gestational age.</td></tr>
+      <tr><td><code>cases</code></td><td><code>CASE_NUMBER</code> (key), patient (deleted with the patient), drug, model, weight, height, age, SCr, CrCl, fitting settings, <code>ARCHIVED</code>, <code>SITE_ID</code>, <code>MODIFY_BY</code> (an email).</td></tr>
+      <tr><td>case children</td><td><code>dosehistory</code>, <code>serumlevel</code> → <code>serumprediction</code>, <code>scrhistory</code>, <code>exact_crcl</code>, <code>renal_replacement_therapy_entry</code>, <code>aki_event</code>, <code>scr_aki_history</code>, <code>drug_factor</code>, <code>amputation_status</code>, <code>pk_custom</code>, <code>pk_bayes</code>, <code>custom_f</code>, <code>bayes_f</code>, <code>therapeutic_target(_input)</code>, <code>therapeutic_assessment</code>, <code>drug_settings</code>, <code>lab_measurement</code>, <code>model_covariate</code>, <code>ehr_sync_data</code>, <code>notes</code>. All are deleted with the case.</td></tr>
+      <tr><td><code>edithistory_web</code></td><td>The audit trail: acting email, patient name and ID, case number, date, action code, site.</td></tr>
+      <tr><td><code>site</code>, <code>iam_groups</code>, <code>epic_encounter_facility</code></td><td>Sites, their Cognito groups (types: All, user, admin, IAM, analytics, site, site_admin), and Epic facility to site mapping.</td></tr>
+      <tr><td><code>user_info</code></td><td>Maps a username and user-pool pair to an email.</td></tr>
+      <tr><td>settings tables</td><td><code>settings</code>, <code>therapeutic_settings</code> and <code>program_updates</code> are keyed by email; institution defaults use the email <code>"institution"</code>. Also <code>institution_settings</code>, protocol tables, and local population <code>models</code> and <code>coefficients</code>.</td></tr>
+      <tr><td>licenseinfo</td><td>shared</td><td><code>institution</code>, <code>license</code>, <code>license_limits</code>, <code>web_license</code>, <code>license_update</code>, <code>drug</code>, <code>institution_drug_package</code>, <code>institution_feature_flag</code>, <code>federated_identity_provider</code>, <code>ehr_tenant_identifier</code>, <code>epic_issuer</code>, <code>oracle_health_issuer</code>, <code>llm_usage</code>, <code>llm_rate_limit</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>How a request finds its schema.</strong> The id token's <code>custom:license_name</code> leads to the license, the license to the institution ID, and the ID is the schema name. The mapping is cached for an hour (<span class="path">app/middlewares/validate_token.py:207-221</span>). The license expiry date is parsed from the last word of the license name, as MM-DD-YYYY.</p>
+  <p><strong>PHI is stored in plain columns.</strong> The service does no field-level encryption and makes no KMS calls. Encryption at rest, if any, is at the RDS storage level, which isn't visible here.</p>
+
+  <h3 id="db-auth">Auth levels</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Level</th><th>Requires</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr><td>User</td><td>XSS screen, both Cognito cookies (paired: same issuer, subject and app client), revocation check, user or admin role, email lookup.</td><td>Most routes</td></tr>
+      <tr><td>Admin</td><td>The same, with the admin role.</td><td><code>/admin/*</code>, protocol-setting edits</td></tr>
+      <tr><td>IAM</td><td>The same, with the IAM or admin role.</td><td><code>/iam/*</code>, <code>/site/*</code></td></tr>
+      <tr><td>Any role</td><td>User, admin or IAM.</td><td><code>/license/*</code>, <code>/updates</code></td></tr>
+      <tr><td>Databridge key</td><td>Only <code>x-api-key</code> equal to <code>DATABASE_EHR_API_KEY</code>, compared in constant time. No token and no XSS screen.</td><td><code>/ehr/*</code></td></tr>
+      <tr><td>Lambda key</td><td>XSS screen plus <code>x-api-key</code> equal to <code>LAMBDA_API_KEY</code>.</td><td><code>/aws/lambda/*</code></td></tr>
+      <tr><td>None</td><td>Nothing.</td><td><code>/HealthCheck</code>, <code>/refresh-token</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Roles come from the <code>cognito:roles</code> claim. <code>cognito:groups</code> is never read, and the analytics and site-admin roles are not enforced here. Nothing in Database restricts a user to their own site within an institution: site filters come from the caller, and cases load by number alone.</p>
+
+  <h3 id="db-routes">Routes</h3>
+  <p>Paths as the service sees them; add <code>/database/v1</code> through the gateway.</p>
+  <h5>Cases, patients and saving (User)</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/cases/load_case</code></td><td>Loads a full case: patient, drug, histories, targets, PK, notes and edit history. Writes a LOAD_CASE audit row.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/cases</code></td><td>Serializes several cases by number.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/cases/search?recNum=</code>, <code>/cases/recent</code></td><td>A patient's cases with AKI and therapeutic status; the 12 cases the caller touched most recently.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/cases/archive_case</code>, <code>/cases/archive_cases</code>, <code>/cases/site_id</code></td><td>Archive one case or all of a patient's cases (audited), or move a case to another site (not audited).</td></tr>
+      <tr><td><span class="pill put">PUT</span></td><td><code>/patients/cases/save</code></td><td>Creates or updates the patient and case and replaces every child table. It silently merges patients whose demographics match exactly. Audited.</td></tr>
+      <tr><td><span class="pill patch">PATCH</span></td><td><code>/patients/cases/save</code></td><td>Updates only the supplied fields and child collections, and is audited as AUTOSAVE. It doesn't check that the case belongs to the patient.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/patients</code></td><td>Search by name, MRN, birthday or drug, with AKI, therapeutic and site filters. Paginated when the Accept header says <code>version=1.0</code>.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/patient/&lt;id&gt;</code>, <code>/patient/aki_status_at_datetime</code>, <code>/get_prior_models</code>, <code>/bayes</code></td><td>One patient; AKI at a given time; previous Bayesian models; a case's individual PK.</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill put">PUT</span>/<span class="pill post">POST</span>/<span class="pill del">DEL</span></td><td><code>/notes</code></td><td>Case notes. Delete has no ownership check, and update checks only the <code>user</code> field the caller sent.</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/get_settings</code>, <code>/save-settings</code>, <code>/updates</code></td><td>User and institution settings, and tour state. <code>POST /updates</code> always returns 204.</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/population/*</code>, <code>/models/*</code>, <code>/stats/*</code></td><td>Local population models and coefficients, model counts, and case counts per drug and per drug factor.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/databridge/case_summary</code></td><td>For EHR import: non-archived cases that exactly match a name, MRN and birthday.</td></tr>
+    </tbody>
+  </table></div>
+  <h5>Analytics (User)</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/analytics/serum/predictions</code></td><td>Up to 100 random matching cases, each with the level to predict. Used by the Analytics back-test.</td></tr>
+      <tr><td><span class="pill put">PUT</span></td><td><code>/analytics/serum/predictions</code></td><td>Saves predictions. Analytics never calls it.</td></tr>
+      <tr><td><span class="pill post">POST</span>/<span class="pill put">PUT</span></td><td><code>/analytics/therapeutic/*</code></td><td>Evaluated cases, assessments, and a bulk case export (<code>get_cases</code>).</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/analytics/aki/*</code>, <code>/analytics/cases/count</code>, <code>/analytics/serum/metrics</code>, <code>/analytics/therapeutic_status_overview</code></td><td>AKI history and counts, patient counts, serum observation counts, status overview.</td></tr>
+    </tbody>
+  </table></div>
+  <h5>Admin, IAM, license, EHR</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th><th>Auth</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/admin/history</code></td><td>Edit history for the last 30 days, at most 1,000 rows.</td><td>Admin</td></tr>
+      <tr><td><span class="pill post">POST</span>/<span class="pill patch">PATCH</span></td><td><code>/admin/settings/*</code></td><td>Institution settings, therapeutic ranges and overrides.</td><td>Admin</td></tr>
+      <tr><td><span class="pill del">DEL</span></td><td><code>/admin/delete_case</code>, <code>/admin/delete/patient</code></td><td>Hard delete, with an audit row. See the cascade issue below.</td><td>Admin</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/admin/unarchive_case(s)</code></td><td>Unarchive. Not audited.</td><td>Admin</td></tr>
+      <tr><td>all</td><td><code>/protocol-settings/*</code></td><td>Max dose, peak time, default target input, infusion time and override rules. Reads need User; writes need Admin.</td><td>User / Admin</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span>/<span class="pill del">DEL</span></td><td><code>/iam/groups</code>, <code>/iam/group</code>, <code>/iam/user_info</code>, <code>/site/*</code></td><td>Group rows, the user_info mapping (written after Main creates or deletes the Cognito user), sites and facility groups.</td><td>IAM</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/license/*</code></td><td>License info, SSO logout URL, AI assistant flag, drug package, LLM token usage, limits and records. <code>/license/limits/&lt;id&gt;</code> and <code>/license/get_schema_ids</code> always fail with a 500.</td><td>Any role</td></tr>
+      <tr><td>all</td><td><code>/ehr/epic/*</code>, <code>/ehr/oracle-health/*</code></td><td>Issuer validation, tenant-to-institution lookup, and Epic facility CRUD. The facility DELETE returns 204 without deleting anything.</td><td>Databridge key</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/aws/lambda/{sso,wk}-providers/info</code></td><td>License and groups for an SSO identity provider or a hospital identifier, presumably for Cognito Lambda triggers; no caller exists in these repositories</td><td>Lambda key</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/refresh-token</code></td><td>Unauthenticated proxy for refreshing tokens. No caller was found in Web or Main.</td><td>None</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="db-audit">Audit trail</h3>
+  <p>An after-request middleware writes an <code>edithistory_web</code> row for seven endpoints: load, create, update, autosave, archive and delete. It does not audit unarchive, moving a case to another site, notes, settings, protocol settings, facility changes, or bulk reads such as <code>POST /cases</code>, <code>/patients</code> and the therapeutic bulk export.</p>
+  <div class="note crit"><span class="label">Deleting a case may erase its own history</span><p>The audit row's case number is a foreign key with <code>ondelete="CASCADE"</code> (<span class="path">app/models/hospital/edithistory.py:13-17</span>). Deleting a case therefore deletes its audit rows. The DELETE_CASE row is then written for a case that no longer exists. The audit writer wraps everything in a bare <code>except: rollback</code> (<span class="path">app/middlewares/edithistory.py:145-146</span>), so that failure is silent. This is how the ORM defines it; whether the production DDL matches is unknown.</p></div>
+
+  <h3 id="db-tests">Tests</h3>
+  <div class="note warn"><span class="label">The test suite drops databases</span><p>Fifteen test files use fixtures that drop and recreate the MySQL databases <code>testing</code>, <code>1683</code>, <code>1119</code> and <code>1401</code> at <code>root:root@127.0.0.1:3306</code> (<span class="path">test/conftest.py:29-41, 134-141</span>). Point it only at a disposable local MySQL. pytest-dotenv also loads the nearest <code>.env</code> walking up, which is the umbrella's real one.</p></div>
+  <ul>
+    <li>Run <code>make install-requirements</code>, which injects the token from <code>.git-token</code>. Then <code>make test</code>, or <code>make test k=name</code> to filter.</li>
+    <li>Well covered: token pairing, expiry, revocation, roles, API keys, XSS, proxy fix, engine and secret rotation, IAM routes, protocol validation, analytics queries, PATCH save.</li>
+    <li>Not covered: the audit middleware, admin delete and unarchive, notes, PUT save, the EHR routes.</li>
+    <li>CI starts both a <code>mysql:8.0</code> service container, with no port mapping, and the runner's own MySQL. The tests most likely hit the latter.</li>
+  </ul>
+
+  <h3 id="db-quirks">Other quirks</h3>
+  <ul>
+    <li>Patient search terms (name, MRN, birthday) are GET query parameters, and the gunicorn access log records the raw URI.</li>
+    <li>Tokens can reach the logs. The access-log format includes the Authorization header whenever parsing throws, and an unknown issuer logs the whole JWT (<span class="path">vendor_info.py:64</span>).</li>
+    <li>The Epic tenant route answers an unknown tenant with HTTP status 0 and the body <code>"401"</code> (<span class="path">epic_api.py:128-129</span>).</li>
+    <li><code>request.json.get("therapeutic_settings" or {})</code> applies the default to the key, not the result, so a missing key causes a 500 (<span class="path">administrators.py:61-62</span>).</li>
+    <li>JWKS and refresh-token HTTP calls have no timeout, and the server runs one sync worker, so a slow call stalls the whole container.</li>
+    <li>The runtime image carries black, pytest and alembic, and pydantic is unpinned. There are three near-identical Dockerfiles.</li>
+  </ul>
+  <h5>Recent commits on main</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Commit</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>41050ca5</code></td><td>IAM user routes report the failure that actually happened (RX-3481).</td></tr>
+      <tr><td><code>c387f3cc</code></td><td><code>user_info</code> delete keys on username and cleans up orphaned preference rows (RX-3482).</td></tr>
+      <tr><td><code>1e330866</code></td><td>Removed unused EHR id-token decorators (RX-3631).</td></tr>
+      <tr><td><code>ec0d35e7</code></td><td>Checks the id token's expiry and compares API keys in constant time (RX-3625).</td></tr>
+      <tr><td><code>32697c77</code></td><td>Stopped serving the license and database admin endpoints (RX-3627).</td></tr>
+      <tr><td><code>71f6238b</code></td><td>Input screening on the Databridge middleware chain (RX-3626).</td></tr>
+      <tr><td><code>76b9d85c</code></td><td>Rejects token pairs from different users or app clients (RX-3606).</td></tr>
+      <tr><td><code>d402adf3</code></td><td>Token revocation on protected requests (RX-3302).</td></tr>
+    </tbody>
+  </table></div>
+</section>

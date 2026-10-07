@@ -1,0 +1,166 @@
+
+  </main>
+</div>
+<style>
+@media (max-width: 900px){ .toc.collapsed{display:none} }
+</style>
+<script>
+(function () {
+  var list = document.getElementById('toc-list');
+  var nav = document.getElementById('toc');
+  var sections = Array.prototype.slice.call(document.querySelectorAll('main section.doc[id]'));
+  var groups = [];
+  var byGroup = {};
+  sections.forEach(function (s) {
+    var g = s.getAttribute('data-group') || 'Other';
+    if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
+    byGroup[g].push(s);
+  });
+
+  var itemFor = {};
+  var allItems = [];
+  groups.forEach(function (g) {
+    var wrap = document.createElement('div');
+    wrap.className = 'toc-group';
+    var h = document.createElement('h2');
+    h.textContent = g;
+    wrap.appendChild(h);
+    var ul = document.createElement('ul');
+    byGroup[g].forEach(function (s) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#' + s.id;
+      var h2 = s.querySelector('h2');
+      a.textContent = s.getAttribute('data-title') || (h2 ? h2.textContent : s.id);
+      li.appendChild(a);
+      var subs = Array.prototype.slice.call(s.querySelectorAll('h3[id]'));
+      var subLinks = [];
+      if (subs.length) {
+        var sub = document.createElement('ul');
+        sub.className = 'toc-sub';
+        sub.hidden = true;
+        subs.forEach(function (h3) {
+          var sli = document.createElement('li');
+          var sa = document.createElement('a');
+          sa.href = '#' + h3.id;
+          sa.textContent = h3.textContent;
+          sli.appendChild(sa);
+          sub.appendChild(sli);
+          subLinks.push(sli);
+        });
+        li.appendChild(sub);
+      }
+      var entry = { li: li, a: a, group: wrap, subs: subLinks, text: (a.textContent + ' ' + g + ' ' + (s.textContent || '').slice(0, 4000)).toLowerCase() };
+      itemFor[s.id] = entry;
+      allItems.push(entry);
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
+    list.appendChild(wrap);
+  });
+  var empty = document.createElement('p');
+  empty.className = 'toc-empty';
+  empty.textContent = 'No sections match. Try a shorter word.';
+  empty.hidden = true;
+  list.appendChild(empty);
+
+  var filtering = false;
+  var current = null;
+  function setCurrent(id) {
+    if (current === id) return;
+    if (current && itemFor[current]) {
+      itemFor[current].a.removeAttribute('aria-current');
+      var oldSub = itemFor[current].li.querySelector('.toc-sub');
+      if (oldSub && !filtering) oldSub.hidden = true;
+    }
+    current = id;
+    var e = itemFor[id];
+    if (!e) return;
+    e.a.setAttribute('aria-current', 'true');
+    var sub = e.li.querySelector('.toc-sub');
+    if (sub) sub.hidden = false;
+  }
+  var ticking = false;
+  function spy() {
+    ticking = false;
+    var pick = sections[0] ? sections[0].id : null;
+    for (var i = 0; i < sections.length; i++) {
+      if (sections[i].getBoundingClientRect().top <= 140) pick = sections[i].id; else break;
+    }
+    if (pick) setCurrent(pick);
+  }
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(spy); }
+  }, { passive: true });
+  spy();
+
+  var input = document.getElementById('toc-filter-input');
+  input.addEventListener('input', function () {
+    var q = input.value.trim().toLowerCase();
+    filtering = q.length > 0;
+    var shown = 0;
+    var groupShown = {};
+    allItems.forEach(function (e) {
+      var subHit = false;
+      e.subs.forEach(function (sli) {
+        var hit = !filtering || sli.textContent.toLowerCase().indexOf(q) !== -1;
+        sli.hidden = !hit;
+        if (filtering && hit) subHit = true;
+      });
+      var hit = !filtering || e.text.indexOf(q) !== -1 || subHit;
+      e.li.hidden = !hit;
+      var sub = e.li.querySelector('.toc-sub');
+      if (sub) sub.hidden = filtering ? !subHit : (current !== e.a.getAttribute('href').slice(1));
+      if (hit) { shown++; groupShown[e.group.firstChild.textContent] = true; }
+    });
+    Array.prototype.forEach.call(list.querySelectorAll('.toc-group'), function (g) {
+      g.hidden = !groupShown[g.firstChild.textContent];
+    });
+    empty.hidden = shown !== 0;
+  });
+
+  var btn = document.getElementById('menu-btn');
+  var mq = window.matchMedia('(max-width: 900px)');
+  function applyMq() {
+    if (mq.matches) { nav.classList.add('collapsed'); btn.setAttribute('aria-expanded', 'false'); }
+    else { nav.classList.remove('collapsed'); }
+  }
+  applyMq();
+  if (mq.addEventListener) mq.addEventListener('change', applyMq);
+  btn.addEventListener('click', function () {
+    var open = nav.classList.toggle('collapsed') === false;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Hide contents' : 'Contents';
+    if (open) nav.scrollIntoView({ block: 'start' });
+  });
+  list.addEventListener('click', function (ev) {
+    if (ev.target.tagName === 'A' && mq.matches) {
+      nav.classList.add('collapsed');
+      btn.setAttribute('aria-expanded', 'false');
+      btn.textContent = 'Contents';
+    }
+  });
+
+  if (location.hash.length > 1) {
+    var target = document.getElementById(location.hash.slice(1));
+    if (target) window.requestAnimationFrame(function () { target.scrollIntoView(); });
+  }
+
+  var cf = document.getElementById('contract-filter');
+  var ct = document.getElementById('contract-table');
+  var cc = document.getElementById('contract-count');
+  if (cf && ct) {
+    var rows = Array.prototype.slice.call(ct.tBodies[0].rows);
+    cf.addEventListener('input', function () {
+      var q = cf.value.trim().toLowerCase();
+      var n = 0;
+      rows.forEach(function (r) {
+        var hit = !q || r.textContent.toLowerCase().indexOf(q) !== -1;
+        r.hidden = !hit;
+        if (hit) n++;
+      });
+      cc.textContent = q ? (n + ' of ' + rows.length + ' calls') : (rows.length + ' calls');
+    });
+  }
+})();
+</script>

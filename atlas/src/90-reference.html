@@ -1,0 +1,80 @@
+
+<section class="doc" id="glossary" data-group="Reference" data-title="Glossary">
+  <header>
+    <p class="eyebrow"><span>Reference</span></p>
+    <h2>Glossary</h2>
+    <p class="summary">Clinical and platform terms as this codebase uses them.</p>
+  </header>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Term</th><th>Meaning here</th></tr></thead>
+    <tbody>
+      <tr><td>PK</td><td>Pharmacokinetics: how a drug's concentration in the body changes over time after doses.</td></tr>
+      <tr><td>TDM</td><td>Therapeutic drug monitoring: measuring drug levels and adjusting doses to keep them in range.</td></tr>
+      <tr><td>TDMS</td><td>The original PrecisePK desktop product. Models named "TDMS" are the legacy single models carried over from it.</td></tr>
+      <tr><td>Prior, posterior</td><td>Prior: the population parameters a published study predicts for this patient. Posterior: the individual parameters after fitting to measured levels. In code these are <code>pk_bayes_prior</code> and <code>pk_bayes</code>.</td></tr>
+      <tr><td>MAP fit</td><td>Maximum a posteriori estimation: the most probable parameters given both the prior and the measured levels.</td></tr>
+      <tr><td>Levenberg-Marquardt</td><td>The optimizer the engine uses for the MAP fit. It blends gradient descent with Gauss-Newton steps.</td></tr>
+      <tr><td>CV, RSD</td><td>Coefficient of variation, also called relative SD: the SD divided by the mean. It is stored in fields named <code>sd</code>.</td></tr>
+      <tr><td>CL, Vd, Vdβ, Vc</td><td>Clearance (L/h); volume of distribution (L); terminal-phase volume; central-compartment volume.</td></tr>
+      <tr><td>AUC, AUC24, AUIC</td><td>Area under the concentration-time curve; the same over 24 h; AUC divided by MIC.</td></tr>
+      <tr><td>MIC</td><td>Minimum inhibitory concentration of an antibiotic against the organism.</td></tr>
+      <tr><td>Trough, peak</td><td>The lowest level just before a dose; the highest level after one. The peak's timing is set by the peak-time protocol.</td></tr>
+      <tr><td>SCr, CrCl, eGFR</td><td>Serum creatinine; creatinine clearance (estimated by a formula such as Cockcroft-Gault, or measured); estimated glomerular filtration rate.</td></tr>
+      <tr><td>BSA, IBW, LBM, dosing weight</td><td>Body surface area; ideal body weight; lean body mass; the weight a model uses, chosen by the engine's rules.</td></tr>
+      <tr><td>AKI; KDIGO, RIFLE, AKIN</td><td>Acute kidney injury, and the three staging criteria the engine evaluates.</td></tr>
+      <tr><td>RRT, CRRT</td><td>Renal replacement therapy (dialysis), and its continuous form.</td></tr>
+      <tr><td>Nomogram</td><td>A table of regimen options, here 3 intervals by 3 infusion times.</td></tr>
+      <tr><td>Protocol settings</td><td>Institution rules for maximum dose, peak time, default target inputs and infusion time, matched to patients by criteria.</td></tr>
+      <tr><td>EHR, FHIR R4</td><td>Electronic health record; HL7's REST standard for clinical data, version R4.</td></tr>
+      <tr><td>SMART on FHIR</td><td>The OAuth-based standard for launching an app from inside an EHR with patient context.</td></tr>
+      <tr><td>MAR, CSN</td><td>Medication administration record; Epic's contact serial number, which identifies the encounter.</td></tr>
+      <tr><td>MRN, EPI</td><td>Medical record number; Epic's enterprise patient identifier.</td></tr>
+      <tr><td>LOINC, RxNorm</td><td>Code systems for lab observations and for medications.</td></tr>
+      <tr><td>Sentri7</td><td>An external clinical platform that pushes patient data into PrecisePK.</td></tr>
+      <tr><td>License, institution, site</td><td>A license belongs to an institution, which has its own MySQL schema. Multi-site institutions divide users and cases by site, using Cognito groups.</td></tr>
+      <tr><td>User pool, identity pool</td><td>Cognito user directory (six of them here); Cognito's exchange of a login for temporary AWS credentials, used by Main's user administration.</td></tr>
+      <tr><td>Blue-green lane</td><td>The <code>v1</code> or <code>v2</code> path segment that routes a frontend to one of two backend deployments (RX-3666).</td></tr>
+      <tr><td>Valkey</td><td>The Redis-compatible cache used in AWS.</td></tr>
+      <tr><td>N-API, prebuild</td><td>Node's stable native-addon interface; a native binary compiled ahead of time for one platform.</td></tr>
+      <tr><td>RX-####, BLITZ-…</td><td>Jira keys. RX is the main project. BLITZ keys come from release-hotfix work.</td></tr>
+      <tr><td>PHI, BAA</td><td>Protected health information under HIPAA; a business associate agreement with a vendor that handles PHI.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="doc" id="symbols" data-group="Reference" data-title="Symbol index">
+  <header>
+    <p class="eyebrow"><span>Reference</span><span>Every symbol used in the equations</span></p>
+    <h2>Symbol index</h2>
+    <p class="summary">Each letter has one meaning across the whole atlas.</p>
+  </header>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Symbol</th><th>Meaning</th><th>Unit</th><th>Defined in</th></tr></thead>
+    <tbody>
+      <tr><td><var>a</var>, <var>b</var></td><td>Rodvold CL coefficients on CrCl and on adjusted weight</td><td>(L/h)/(mL/min); (L/h)/kg</td><td><a href="#pk-rodvold-cl">Clearance prior</a></td></tr>
+      <tr><td><var>d</var></td><td>Rodvold Vdβ per kg of dosing weight</td><td>L/kg</td><td><a href="#pk-rodvold-v">Volume prior</a></td></tr>
+      <tr><td><var>m</var></td><td>ICU multiplier on Vdβ</td><td>none</td><td><a href="#pk-rodvold-v">Volume prior</a></td></tr>
+      <tr><td><var>t</var></td><td>Time</td><td>h</td><td><a href="#pk-rodvold-cl">Clearance prior</a></td></tr>
+      <tr><td>CL, CL<sub>pop</sub></td><td>Clearance; its population estimate</td><td>L/h</td><td><a href="#pk-rodvold-cl">Clearance prior</a></td></tr>
+      <tr><td>CrCl(<var>t</var>)</td><td>Creatinine clearance at time <var>t</var></td><td>mL/min</td><td><a href="#pk-rodvold-cl">Clearance prior</a></td></tr>
+      <tr><td><var>W</var><sub>adj</sub>, <var>W</var><sub>dose</sub></td><td>Adjusted body weight; dosing weight</td><td>kg</td><td><a href="#pk-rodvold">Rodvold</a></td></tr>
+      <tr><td>Vd<sub>β</sub>, Vd<sub>β,pop</sub>, <var>V</var><sub>c</sub></td><td>Terminal-phase volume, its population estimate, and central volume</td><td>L</td><td><a href="#pk-rodvold-v">Volume prior</a></td></tr>
+      <tr><td><var>α</var>, <var>β</var></td><td>Fast and slow rate constants of the concentration curve</td><td>h⁻¹</td><td><a href="#pk-rodvold-derived">Derived values</a></td></tr>
+      <tr><td><var>k</var><sub>10</sub>, <var>k</var><sub>12</sub>, <var>k</var><sub>21</sub></td><td>Elimination and inter-compartment rate constants</td><td>h⁻¹</td><td><a href="#pk-rodvold-derived">Derived values</a></td></tr>
+      <tr><td><var>θ</var>, <var>θ</var><sub><var>j</var></sub>, <var>θ</var><sub>pop,<var>j</var></sub></td><td>Fitted parameters, the <var>j</var>-th one, and its prior value</td><td>varies</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>CV</var><sub><var>j</var></sub></td><td>Prior coefficient of variation of parameter <var>j</var></td><td>none</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>J</var>(<var>θ</var>), <var>J</var><sub>y</sub>, <var>J</var><sub>θ</sub></td><td>Fit objective; its level part and its prior part</td><td>none</td><td><a href="#pk-fit-objective">Fit objective</a>, <a href="#fe-model-fit-demo">Demo</a></td></tr>
+      <tr><td><var>y</var><sub><var>i</var></sub>, <var>ŷ</var><sub><var>i</var></sub></td><td>Measured and predicted level <var>i</var></td><td>mg/L</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>s</var><sub><var>i</var></sub></td><td>Error scale of level <var>i</var></td><td>mg/L</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>σ</var><sub>A</sub>, <var>σ</var><sub>F</sub></td><td>Proportional assay error; fixed error</td><td>none; mg/L</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>r</var></td><td>Time-weight factor</td><td>none</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>t</var><sub><var>i</var></sub>, <var>t</var><sub>last</sub></td><td>Time of level <var>i</var>; time of the latest level</td><td>h</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>z</var><sub><var>j</var></sub>, <var>e</var><sub><var>j</var></sub>, <var>u</var><sub><var>j</var></sub></td><td>Prior penalty; the extra penalty near zero; how far below a tenth of the prior</td><td>none</td><td><a href="#pk-fit-objective">Fit objective</a></td></tr>
+      <tr><td><var>ε</var><sub><var>i</var></sub></td><td>Weighted residual of level <var>i</var>, (ŷ<sub>i</sub> − y<sub>i</sub>)/s<sub>i</sub></td><td>none</td><td><a href="#fe-model-fit-demo">Demo</a></td></tr>
+      <tr><td><var>N</var>, <var>p</var></td><td>Informative level count; probability under chi-square</td><td>none</td><td><a href="#fe-model-fit-demo">Demo</a></td></tr>
+      <tr><td><var>A</var>, <var>B</var>, <var>C</var><sub>θ</sub>, <var>I</var>, <var>κ</var><sub><var>i</var></sub></td><td>Residual slopes; prior-penalty slopes; prior covariance; identity; eigenvalues</td><td>none</td><td><a href="#fe-model-fit-demo">Demo</a></td></tr>
+      <tr><td>AUC<sub>24</sub></td><td>Area under the curve over 24 h</td><td>mg·h/L</td><td>Header figure</td></tr>
+    </tbody>
+  </table></div>
+  <a class="totop" href="#top">Back to top</a>
+</section>

@@ -1,0 +1,40 @@
+
+<section class="doc" id="shared-js" data-group="Shared libraries" data-title="Shared-JS">
+  <header>
+    <p class="eyebrow"><span>src/packages/node/PreciseRx-Shared-JS</span><span>TypeScript 5.9</span><span>@preciserx/preciserx-shared-js 1.13.5</span></p>
+    <h2>PreciseRx-Shared-JS</h2>
+    <p class="summary">Shared Node code for Main, Analytics and Databridge: Cognito token verification, token pairing, cookie parsing, logging, error classes and AWS SDK adapters. It is compiled twice with plain <code>tsc</code>, once to ESM and once to CommonJS, and published to GitHub Packages.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Area</th><th>Exports</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr><td>Token checks</td><td><code>createCognitoAuth({userPools})</code> returns <code>validateAccessToken</code> and <code>validateIdToken</code> middleware built on <code>aws-jwt-verify</code>. <code>assertTokenPairing</code> requires the same <code>sub</code> and <code>iss</code> (RX-3606). <code>getRolesFromIdToken</code> decodes without verifying.</td><td>Main, Analytics, Databridge</td></tr>
+      <tr><td>Cookies</td><td><code>sanitizeCookies</code> parses the Cookie header into <code>req.headers.cookies</code>, where the first duplicate wins. Also <code>getAccessToken</code>, <code>getIdToken</code>, <code>getRefreshToken</code>.</td><td>all three</td></tr>
+      <tr><td>Logging</td><td><code>logger</code> (winston: JSON outside development). <code>MorganLogStreamMiddleware</code> writes an access log with forwarded IP, method, URL, status, time, and a user ID decoded (not verified) from the token. It skips <code>/HealthCheck</code>.</td><td>all three</td></tr>
+      <tr><td>Errors</td><td><code>ErrorHandlerMiddleware</code>; <code>ApplicationError</code> and its 400, 401, 403 and 500 subclasses, plus token and license errors.</td><td>all three</td></tr>
+      <tr><td>AWS adapters</td><td>Cognito admin operations (create, delete, disable, enable, groups, passwords, sign-out, revoke) wrapped with throttling retries. Also <code>buildCognitoContextData</code> (the real client IP for Cognito threat protection), SQS and Secrets Manager helpers.</td><td>mostly Databridge; SQS unused</td></tr>
+      <tr><td>Rate limiting</td><td><code>createL2Limiter(name, options)</code>, backed by Redis or memory.</td><td>not used yet</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Publishing.</strong> <code>make publish</code> bumps the version, pushes a <code>stable/v…</code> branch and publishes. The branch push triggers a second publish, which fails as expected. Tags stop at <code>v1.10.0</code>, so the <code>stable/v*</code> branches are the real release record.</li>
+    <li><strong>Tests.</strong> <code>pnpm test</code> runs 13 Jest files with a 55% line-coverage threshold. The Cognito and SQS wrappers and the factories are untested.</li>
+    <li><strong>Error handling risks.</strong> The Cognito wrapper turns its own <code>ApplicationError</code>s, and any unlisted Cognito exception, into a generic 500. Persistent throttling returns <code>null</code> instead of throwing.</li>
+    <li><strong>Local development.</strong> <code>rebuild-watch</code> runs two <code>tsc -w</code> builds side by side. The umbrella's <code>link-preciserx-shared-js</code> target uses it.</li>
+  </ul>
+</section>
+
+<section class="doc" id="shared-python" data-group="Shared libraries" data-title="Shared-Python">
+  <header>
+    <p class="eyebrow"><span>src/packages/python/PreciseRx-Shared-Python</span><span>Python</span><span>Poetry</span></p>
+    <h2>PreciseRx-Shared-Python</h2>
+    <p class="summary">A Python copy of the Shared-JS error classes, plus a Flask error handler. It isn't published to any package index; consumers install it straight from GitHub by git ref. It has no tests and an empty README.</p>
+  </header>
+  <ul>
+    <li><strong>Different refs and package names.</strong> Database installs tag <code>v1.0.0</code> and imports <code>PreciseRxShared</code>. GenAI <code>main</code> pins a deleted branch and imports the lowercase <code>preciserxshared</code>. The only difference between the two is the folder rename.</li>
+    <li><strong>Broken module.</strong> <code>http/validate_parameters.py</code> cannot be imported, because it uses an absolute <code>errors</code> import that doesn't exist once the package is installed.</li>
+    <li><strong>Duplicate classes.</strong> <code>errors/constants.py</code> defines a second copy of every error class. Catching one copy won't catch the other.</li>
+    <li><strong>Missing dependencies.</strong> Flask and Werkzeug are imported but not declared.</li>
+    <li><strong>Message drift.</strong> Messages differ from Shared-JS; for example, "authorization failed" here versus "authentication failed" there.</li>
+  </ul>
+</section>

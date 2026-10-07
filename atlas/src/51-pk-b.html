@@ -1,0 +1,242 @@
+
+<section class="doc" id="pk-fit" data-group="Dosing engine" data-title="How a fit works">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>src/pharmacokinetics/bayesianfitting/</span></p>
+    <h2>How a Bayesian fit works</h2>
+    <p class="summary">The fit finds the parameters that best explain the measured levels without straying further from the population prior than the data justify. It uses a hand-written Levenberg-Marquardt optimizer. It doesn't use Nelder-Mead or Eigen.</p>
+  </header>
+
+  <h3 id="pk-fit-objective">The objective</h3>
+  <div class="eq">
+    <p class="f"><var>J</var>(<var>θ</var>) = Σ<sub><var>i</var></sub> [ (<var>ŷ</var><sub><var>i</var></sub>(<var>θ</var>) − <var>y</var><sub><var>i</var></sub>) / <var>s</var><sub><var>i</var></sub> ]² + Σ<sub><var>j</var></sub> <var>z</var><sub><var>j</var></sub>²</p>
+    <p class="where">where</p>
+    <dl>
+      <dt>θ</dt><dd>the fitted parameters (for Rodvold 1988: CL and Vd<sub>β</sub>); θ<sub>j</sub> is the <var>j</var>-th one</dd>
+      <dt>J(θ)</dt><dd>the quantity the optimizer minimizes</dd>
+      <dt>y<sub>i</sub></dt><dd>the <var>i</var>-th measured drug level, mg/L</dd>
+      <dt>ŷ<sub>i</sub>(θ)</dt><dd>the level predicted by θ at the same time, mg/L. It is floored near 0.1% of the highest measured level, so the optimizer never divides by a zero prediction.</dd>
+      <dt>s<sub>i</sub></dt><dd>the error scale of level <var>i</var> (next box)</dd>
+      <dt>z<sub>j</sub></dt><dd>the prior penalty on θ<sub>j</sub> (box after)</dd>
+    </dl>
+    <p class="src">The residual functions are That the optimizer sums their squares is from <span class="path">individualfitting.cpp:88-100</span>. Parameters enter the sum as extra pseudo-observations (<span class="path">bayesianfitting.cpp:223-229</span>).</p>
+  </div>
+
+  <div class="eq">
+    <p class="f"><var>s</var><sub><var>i</var></sub> = max( <var>r</var><sup> <var>t</var><sub>last</sub> − <var>t</var><sub><var>i</var></sub></sup> · ( <var>σ</var><sub>A</sub> · <var>ŷ</var><sub><var>i</var></sub> + min(<var>σ</var><sub>F</sub>, 100 · <var>σ</var><sub>A</sub> · <var>ŷ</var><sub><var>i</var></sub>) ),  0.01 · <var>y</var><sub><var>i</var></sub> )</p>
+    <p class="where">where</p>
+    <dl>
+      <dt>σ<sub>A</sub></dt><dd>proportional assay error. It is <code>standard_error</code> in JavaScript and <code>assay_error</code> in C++. Vancomycin's default is 0.1.</dd>
+      <dt>σ<sub>F</sub></dt><dd>fixed error, mg/L. It is <code>fixed_error</code> in JavaScript and <code>sem</code> in C++. Vancomycin's default is 1.25. The cap of 100 · σ<sub>A</sub> · ŷ<sub>i</sub> stops σ<sub>F</sub> from swamping near-zero predictions, which the code says can trap the fit in a local minimum.</dd>
+      <dt>r</dt><dd>time-weight factor, <code>time_weight_factor</code>. Vancomycin's default is 1.005, or 1.01 in ICU. Because r &gt; 1, older levels get a larger s<sub>i</sub> and count for less.</dd>
+      <dt>t<sub>i</sub></dt><dd>time of level <var>i</var>, hours since the first dose</dd>
+      <dt>t<sub>last</sub></dt><dd>time of the latest measured level, hours (<code>max_level_time()</code> returns the latest level's time)</dd>
+    </dl>
+    <p class="src"><span class="path">level_loss_v1.0.cpp:11-38</span> In least-squares mode, σ<sub>A</sub> · ŷ<sub>i</sub> is replaced with 0.01 · y<sub>i</sub> and σ<sub>F</sub> with 0 (<span class="path">:26-29</span>). Vancomycin defaults are from <span class="path">src/drug/vancomycin.hpp:803-823</span></p>
+  </div>
+
+  <div class="eq">
+    <p class="f">normal:  <var>z</var><sub><var>j</var></sub> = (<var>θ</var><sub><var>j</var></sub> − <var>θ</var><sub>pop,<var>j</var></sub>) / max(<var>CV</var><sub><var>j</var></sub> · <var>θ</var><sub>pop,<var>j</var></sub>, 0.01 · <var>θ</var><sub>pop,<var>j</var></sub>) + <var>e</var><sub><var>j</var></sub></p>
+    <p class="f">log-normal:  <var>z</var><sub><var>j</var></sub> = (ln <var>θ</var><sub><var>j</var></sub> − ln <var>θ</var><sub>pop,<var>j</var></sub>) / max(<var>CV</var><sub><var>j</var></sub>, 0.001) + <var>e</var><sub><var>j</var></sub></p>
+    <p class="f"><var>e</var><sub><var>j</var></sub> = exp(2 · <var>u</var><sub><var>j</var></sub>) − 1 if <var>θ</var><sub><var>j</var></sub> &lt; 0.1 · <var>θ</var><sub>pop,<var>j</var></sub>, otherwise 0;   <var>u</var><sub><var>j</var></sub> = (0.1 · <var>θ</var><sub>pop,<var>j</var></sub> − <var>θ</var><sub><var>j</var></sub>) / (0.1 · <var>θ</var><sub>pop,<var>j</var></sub>)</p>
+    <p class="where">where</p>
+    <dl>
+      <dt>θ<sub>pop,j</sub></dt><dd>the prior (population) value of parameter <var>j</var></dd>
+      <dt>CV<sub>j</sub></dt><dd>its prior coefficient of variation, stored in the field named <code>sd</code> (0.5 for Rodvold CL, 0.3 for Vd<sub>β</sub>)</dd>
+      <dt>e<sub>j</sub></dt><dd>an extra penalty that grows as θ<sub>j</sub> falls below a tenth of its prior, keeping parameters away from zero</dd>
+      <dt>u<sub>j</sub></dt><dd>how far below that tenth θ<sub>j</sub> is, from 0 to 1</dd>
+    </dl>
+    <p class="src"><span class="path">param_loss_v1.1.cpp:19-45</span> Log-normal is used when <code>prior_scale</code> is <code>"lognormal"</code>, or when it isn't <code>"normal"</code> and the model is nonlinear (<span class="path">:31-32</span>). The log-normal form divides by CV<sub>j</sub> directly; the code's own TODO asks whether it should use a log-scale SD instead (<span class="path">:36</span>).</p>
+  </div>
+
+  <h3 id="pk-fit-optimizer">The optimizer</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Step</th><th>Behaviour</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Start</td><td>Every parameter starts at 1.1 × its prior value.</td><td class="path">bayesianfitting.cpp:228</td></tr>
+      <tr><td>Jacobian</td><td>Forward differences with a relative step of 1e-5.</td><td class="path">:339-352</td></tr>
+      <tr><td>Damping</td><td>Starts at 10, and is multiplied or divided by 10 after each step. The diagonal is scaled by 1 + damping.</td><td class="path">:220, 273-274, 315-324</td></tr>
+      <tr><td>Convergence</td><td>Every relative step below 0.001.</td><td class="path">:292-296</td></tr>
+      <tr><td>Iteration cap</td><td>1,000. When the loop hits the cap it falls through to <code>finalize(SUCCESS)</code>, so an unconverged fit is reported as successful.</td><td class="path">:238, 332</td></tr>
+      <tr><td>Time cap</td><td>20 s wall clock, which returns <code>ERR_TIMEOUT_EXCEEDED</code>. The fit is synchronous, so for up to 20 s it blocks the Node event loop of whichever service called it.</td><td class="path">:206, 240-241</td></tr>
+      <tr><td>Posterior spread</td><td>Posterior CV = √(diagonal of the inverse normal matrix) ÷ parameter value.</td><td class="path">individualfitting.cpp:81-84</td></tr>
+      <tr><td>Prior covariance</td><td>Meant to be captured on the first iteration, but <code>iter</code> is incremented (line 269) before the <code>iter == 0</code> check (line 284). So <code>ab_bayes_prior</code> is never filled. <code>fit_and_plot</code> returns it as the prior covariance, all zeros (<span class="path">pklibraryjs.cpp:1772-1780</span>)</td><td class="path">:208, 269, 284-290</td></tr>
+      <tr><td>Refusal</td><td>No fit when there are fewer than 2 levels before the first dose and none after it.</td><td class="path">individualfitting.cpp:26-48</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Population refit.</strong> <code>fit_population</code> regresses individual fitted parameters on covariates, using Bayesian linear regression with a conjugate normal prior. This is how an institution builds a local model (<span class="path">populationfitting_regress.cpp:11-95</span>). Its variance loop runs exactly once, because <code>prev_sigma2</code> is set equal to <code>sigma2</code> before the check (<span class="path">:74-81</span>).</p>
+
+  <h3 id="pk-fit-path">From JavaScript to the maths</h3>
+  <pre class="mermaid">
+flowchart TD
+  A["Main or Analytics calls fit_and_plot(patient, drug, settings, pk, graphing)"] --> B["Parse JS objects into Store structs (storeobjects.cpp)"]
+  B --> C["Unravel: Drug::init, determine_model, set_model builds VancomycinRodvold1988"]
+  C --> D["Build the prior BayesContainer and the GraphicAnalysis history"]
+  D --> E["IndividualFitting::fit"]
+  E --> F["Levenberg-Marquardt loop"]
+  F --> G{"Closed form allowed?"}
+  G -- "linear, nothing time-varying, no dialysis, IV intermittent" --> H["TwoCompartment::concentration_closed_form"]
+  G -- "otherwise" --> I["Model::simulate with fixed-step Euler"]
+  H --> J["level residuals + prior penalties"]
+  I --> J
+  J --> F
+  F --> K["Plot prior and fitted curves"]
+  K --> L["Reravel back to a JS object"]
+  </pre>
+  <p>The result object is <code>{bayes_prior_params, fitted_params, graphic_analysis, covariance, warnings, cl_rrt_history, fitting_session}</code> (<span class="path">pklibraryjs.cpp:1833-1846</span>).</p>
+</section>
+
+<section class="doc" id="pk-simulate" data-group="Dosing engine" data-title="Simulation and dosing">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>model/, math/, doseprediction/, therapeutictarget/</span></p>
+    <h2>Simulation and dose search</h2>
+    <p class="summary">Concentrations come either from a closed-form formula or from a numerical simulation. Regimens come from an analytic formula when the model and target allow it, and from a bracket-and-bisect search otherwise.</p>
+  </header>
+  <h3 id="pk-predict">Predicting a concentration</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Path</th><th>When</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Closed form</td><td>The model is linear, nothing is time-varying, there is no dialysis, and every dose is intermittent IV (<span class="path">model.cpp:730-745</span>).</td><td>Each dose's analytic contribution is added up. The Eigen-based <code>LinearPK</code> module rebuilds full compartment state from past doses (<span class="path">math/linear_pk.h:7-34</span>).</td></tr>
+      <tr><td>Simulation</td><td>Everything else, including oral doses, continuous infusions, dialysis and time-varying CL.</td><td><code>"basic_euler"</code> by default: a fixed-step explicit Euler loop doing absorption, then distribution, then elimination in each step (<span class="path">pksimulator_euler.cpp:190-231</span>). Steps are 1/120 h or 1/320 h, and 1/9 h for biologics. Runs to 60 days, or 365 for infliximab and adalimumab (<span class="path">pkconstants.cpp:30-38</span>).</td></tr>
+      <tr><td>Steady state</td><td>Regimen forecasts.</td><td>Its own inline Euler loop, stopping when consecutive troughs agree within 0.01% (<span class="path">model.cpp:805-961</span>).</td></tr>
+    </tbody>
+  </table></div>
+  <p>RK4 and Dormand-Prince simulators exist, but they aren't the default. Their test suites account for most of the 249 disabled tests, and seven Boost-based versions are disabled with a <code>.disabled</code> file extension.</p>
+  <p>Supported structures: 1-, 2- and 3-compartment linear models, Michaelis-Menten one- and two-compartment models, Erlang transit absorption, lag time, dose-dependent absorption rate, time-varying CL and dialysis clearance.</p>
+
+  <h3 id="pk-dose">Finding a regimen</h3>
+  <ul>
+    <li><strong>Analytic.</strong> One-compartment IV trough, peak, AUC, and peak with trough. For AUC, the dose is the per-interval AUC × CL ÷ (F × salt factor) (<span class="path">onecompartment.cpp:512-559</span>). Two-compartment IV AUC is also analytic.</li>
+    <li><strong>Search.</strong> <code>Model::target_binary_search</code> brackets the answer by doubling or halving from 250 and 500. It then bisects until the error is within 0.001 target units, up to 200 iterations. Each step simulates the regimen to steady state (<span class="path">model.cpp:336+</span>).</li>
+    <li><strong>Loading dose.</strong> Searched separately when the starting level is below 0.95 × the steady-state trough (<span class="path">model.cpp:375-406</span>).</li>
+    <li><strong>Continuous infusion.</strong> AUC is converted to a target average concentration of AUC ÷ 24.</li>
+    <li><strong>Trough-range courses.</strong> These use a finite loading course plus maintenance (teicoplanin). They use the closed form <code>LinearPK::dose_from_state</code> (<span class="path">linearmodel.cpp:216-301</span>).</li>
+    <li><strong>Cumulative AUC.</strong> For 48, 72 or 96 h, the AUC already given is subtracted.</li>
+    <li><strong>Infusion time.</strong> Starts at 0.5 h and grows in 0.25 h steps until the institution's protocol is satisfied. The same loop is copied into the binding (<span class="path">pklibraryjs.cpp:2343-2362</span>).</li>
+    <li><strong>Confidence range.</strong> Uses finite-difference sensitivities combined with the covariance (the delta method). Only the upper triangle is summed, and the result is about ±1 SD, although it is labelled a 95% interval. The comment says "unable to find source for this algorithm" (<span class="path">steadystate.cpp:175-206</span>).</li>
+  </ul>
+</section>
+
+<section class="doc" id="pk-api" data-group="Dosing engine" data-title="JavaScript API and errors">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>bindings/nodejs/pklibraryjs.{h,cpp}</span></p>
+    <h2>The JavaScript API</h2>
+    <p class="summary"><code>InitAll</code> exports 71 functions and a <code>Settings</code> class. Every function is synchronous, and none uses an async worker. Only <code>Settings</code> has TypeScript types (<span class="path">index.d.ts</span>).</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Area</th><th>Functions</th></tr></thead>
+    <tbody>
+      <tr><td>Catalog</td><td><code>supported_drugs</code>, <code>patient_supported_drugs</code>, <code>drug_routes</code>, <code>get_routes</code>, <code>route_information</code>, <code>dialysis_routes</code>, <code>drug_information</code>, <code>get_drug_metadata</code>, <code>get_all_drug_metadata</code>, <code>supported_models</code>, <code>patient_supported_models</code>, <code>categorized_models</code>, <code>model_is_valid</code>, <code>check_valid_model</code>, <code>auto_select_model</code></td></tr>
+      <tr><td>Targets and units</td><td><code>therapeutic_targets</code>, <code>dosage_targets</code>, <code>targets_and_units</code>, <code>target_unit</code>, <code>all_therapeutic_targets</code>, <code>therapeutic_target_options</code>, <code>default_therapeutic_target_ranges</code>, <code>initial_dosage_inputs</code>, <code>initial_serum_forecast_inputs</code>, <code>recommended_infusion_time</code>, unit options and conversions, <code>supported_settings</code>, <code>default_settings</code> (exported twice)</td></tr>
+      <tr><td>Patient</td><td><code>calculate_age</code>, <code>calculate_body_comp</code>, <code>calculate_bsa</code>, <code>calculate_crcl</code>, <code>calculate_gfr</code>, <code>calculate_free_fraction</code>, <code>aki_assessment</code>, <code>aki_criteria_information</code>, <code>lab_results_warnings</code>, <code>drug_factors_warnings</code>, patient-factor lists</td></tr>
+      <tr><td>PK and fitting</td><td><code>calculate_pk</code>, <code>calculate_pk_from_coefficients</code>, <code>calculate_fitted_parameters</code>, <code>default_fitting_settings</code>, <code>default_peak_time_definition</code>, <code>therapeutic_and_toxic_ranges</code>, <code>fit_and_plot</code>, <code>fit</code>, <code>plot</code>, <code>predict_level</code>, <code>fit_population</code>, <code>individual_dose_analytics</code>, <code>therapeutic_assessment</code></td></tr>
+      <tr><td>Dosing</td><td><code>dosage_regimen</code>, <code>nomogram</code>, <code>steady_state</code>, <code>therapeutic_target</code>, <code>recalculate_therapeutic_target</code> (the <code>_v2</code> names are aliases)</td></tr>
+    </tbody>
+  </table></div>
+  <h4>Common input shapes</h4>
+  <pre><code>drug     = { name, selected_model: { model_name }, selected_route,
+             settings: { auc_unit, peak_time_definition } }
+pk       = { fitted_parameters: { f: [ {name, val, sd, citation} ], others: [ … ] } }
+graphing = { history: { dosage_history, dialysis_history, serum_history },
+             fitting_settings: { standard_error, fixed_error, time_weight_factor,
+                                 objective_function, prior_scale } }</code></pre>
+  <p>Source: <span class="path">storeobjects.cpp:248-258, 308-330, 470-478</span>. The JavaScript names <code>standard_error</code> and <code>fixed_error</code> become the C++ fields <code>assay_error</code> and <code>sem</code>.</p>
+
+  <h3 id="pk-errors">What happens when the engine fails</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Case</th><th>What the caller gets</th></tr></thead>
+    <tbody>
+      <tr><td>Most functions throw internally</td><td>An empty object <code>{}</code>, an empty array, <code>""</code>, or <code>-1</code> for <code>predict_level</code>. The error goes to stderr, not to the service's logger. There are 68 <code>catch(...)</code> blocks; for <code>fit</code> see <span class="path">pklibraryjs.cpp:1947-1951</span>.</td></tr>
+      <tr><td><code>therapeutic_target</code>, <code>recalculate_therapeutic_target</code></td><td><code>{err: {code, message}}</code>, which Main maps to 400 or 500.</td></tr>
+      <tr><td><code>Settings</code> constructor</td><td>Throws a real JavaScript error.</td></tr>
+      <tr><td>Invalid institution settings</td><td>Silently replaced with defaults, including the CrCl formula (<span class="path">unraveler.cpp:27-31</span>).</td></tr>
+      <tr><td>Weight or height unit other than exactly <code>kg</code>, <code>lb</code>, <code>cm</code> or <code>in</code></td><td>The patient is rebuilt with <code>"kg"</code> and <code>"cm"</code> and the <strong>same numbers</strong>, so 180 sent as <code>"lbs"</code> becomes 180 kg (<span class="path">unraveler.cpp:46-50</span>; <span class="path">src/utils/units/unit.cpp:160-168, 227-233</span>).</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="doc" id="pk-build" data-group="Dosing engine" data-title="Build, test, publish">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>CMake · node-gyp · GitHub Actions</span></p>
+    <h2>Build, test and publish</h2>
+    <p class="summary">CMake builds the library and the GoogleTest runner. node-gyp builds the addon from a hand-maintained source list. GitHub Actions compiles prebuilt binaries for six platforms and publishes to GitHub Packages whenever the version in <code>package.json</code> changes.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Task</th><th>Command</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>C++ tests</td><td><code>make build-test-cpp &amp;&amp; make test-cpp</code></td><td>Needs CMake 3.17+, Ninja and ccache. Filter with <code>./build/test/PKLibrary_tst --gtest_filter='BayesianFitting.*'</code>. VS Code TestMate finds the same binary.</td></tr>
+      <tr><td>Node binding tests</td><td><code>make build-pk-library-js &amp;&amp; make test-pk-library-js t='pattern'</code></td><td>One Jest file with 4 tests.</td></tr>
+      <tr><td>Python binding tests</td><td><code>make test-pk-library-python k=pattern</code></td><td>18 files, 110 tests.</td></tr>
+      <tr><td>Benchmarks</td><td><code>make build-benchmark run-benchmark</code></td><td>Google Benchmark 1.8.3.</td></tr>
+      <tr><td>Linux prebuild for local containers</td><td><code>pnpm prebuild:linux</code></td><td>Docker buildx on <code>node:24-alpine3.23</code> (musl). Output goes to <code>prebuilds/</code>.</td></tr>
+      <tr><td>Clean</td><td><code>make clean</code></td><td>Runs <code>sudo rm -rf lib/benchmark</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>CI.</strong> <code>unit-test-workflow.yml</code> runs C++, Python and Node jobs on pull requests to <code>main</code>. <code>codeql.yml</code> scans, but sets up Node 18 while the package needs 24.</li>
+    <li><strong>Publishing.</strong> <code>publish.yml</code> runs on every push to every branch. When the version changes, it builds prebuilds for Linux glibc x64/arm64, Linux musl x64/arm64 and macOS arm64/x64. It then runs <code>pnpm publish</code> and tags <code>v&lt;version&gt;</code>. Stable versions may only come from a <code>stable/vX.Y.Z</code> branch; prereleases can come from any branch.</li>
+    <li><strong>Install behaviour.</strong> <code>index.js</code> is <code>require('node-gyp-build')(__dirname)</code>, which picks the matching binary from <code>prebuilds/</code>. Each install also runs a diagnostics script.</li>
+    <li><strong><code>binding.gyp</code> quirks.</strong> A missing comma merges <code>"NAPI_CPP_EXCEPTIONS" "NAPI_VERSION=8"</code> into one string (line 196), so neither macro is defined. Exceptions still work because <code>-fexceptions</code> is set. Two sources are listed twice, and the hand-written list can drift from the CMake glob.</li>
+  </ul>
+</section>
+
+<section class="doc" id="pk-prior-scale" data-group="Dosing engine" data-title="RX-3699: prior scale branch">
+  <header>
+    <p class="eyebrow"><span>PK-Library + PreciseRx-Main</span><span>branch rx-3699-prior-scale</span><span>uncommitted</span></p>
+    <h2>RX-3699: choosing the prior's scale</h2>
+    <p class="summary">RX-3699 is the model-fit and goodness-of-fit work. This branch adds an optional fitting setting, <code>prior_scale</code>, which chooses whether the prior penalty is computed on a normal or a log-normal scale. Today that choice is hard-coded: log-normal only for nonlinear models. All of the changes are uncommitted, and the branch has no commits of its own in either repo.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Change</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>New constants <code>"model"</code>, <code>"normal"</code>, <code>"lognormal"</code></td><td class="path">src/common/pkconstants.hpp, pkconstants.cpp</td></tr>
+      <tr><td><code>FittingSettings.prior_scale</code>, defaulting to <code>"model"</code></td><td class="path">graphicanalysis.h:278</td></tr>
+      <tr><td>The Node layer reads <code>fitting_settings.prior_scale</code> when present</td><td class="path">bindings/nodejs/storeobjects.cpp:476-477</td></tr>
+      <tr><td>The prior penalty honours it</td><td class="path">param_loss_v1.1.cpp:29-37</td></tr>
+      <tr><td><code>FittingSettings::is_valid</code> rejects unknown values</td><td class="path">graphicanalysis.cpp:748-755</td></tr>
+      <tr><td>Unit test on Westra 2019, a linear model: default, normal and log-normal residuals</td><td class="path">test/bayesianfitting.test.cpp:176-197</td></tr>
+      <tr><td>Main accepts the field in its Joi schema</td><td class="path">PreciseRx-Main/src/schemas.js:249</td></tr>
+    </tbody>
+  </table></div>
+  <h4>Gaps before this can ship</h4>
+  <ul>
+    <li><strong>Nothing calls <code>FittingSettings::is_valid</code>.</strong> A typo such as <code>"log_normal"</code> silently behaves like <code>"model"</code>. Main's Joi <code>.valid(…)</code> doesn't help either, because Main logs validation errors and carries on (see <a href="#main">Main</a>).</li>
+    <li><strong>A value that isn't a string throws inside argument parsing.</strong> The engine catches it, so <code>fit_and_plot</code> returns <code>{}</code>.</li>
+    <li><strong>The services pin 1.6.1, which doesn't read <code>prior_scale</code>.</strong> The field is ignored everywhere except a container linked to your local build.</li>
+    <li><strong>The package version is still <code>1.7.0-rx-3240.0</code>,</strong> so <code>publish.yml</code> will not publish this work.</li>
+    <li><strong>The log-normal penalty divides by CV directly.</strong> The exact log-scale SD for a given CV is √ln(1 + CV²): 0.472 for CV 0.5 and 0.294 for CV 0.3.</li>
+  </ul>
+</section>
+
+<section class="doc" id="pk-debt" data-group="Dosing engine" data-title="Engine risks and debt">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>Quirks</span></p>
+    <h2>Engine risks and technical debt</h2>
+    <p class="summary">Items that could affect a dose come first.</p>
+  </header>
+  <h4>Could affect a dose</h4>
+  <ul>
+    <li>An unexpected weight or height unit silently becomes kg or cm (<a href="#pk-errors">above</a>).</li>
+    <li>Failures come back as <code>{}</code> or <code>-1</code>, so a caller can't tell "no result" from "failed" except by the response's shape.</li>
+    <li>Declared parameter limits are never applied (<a href="#pk-rodvold-limits">Rodvold limits</a>).</li>
+    <li>An unconverged fit is reported as <code>SUCCESS</code>.</li>
+    <li>The returned prior covariance is all zeros.</li>
+    <li>The confidence range counts off-diagonal covariance terms once instead of twice, and is about 1 SD, not 95%.</li>
+    <li>Loading-dose rounding keeps the last option that beats round-up, not the best of three (<span class="path">dosageregimen.cpp:243-247</span>).</li>
+    <li><code>route_information</code> has no <code>try</code>, so an unknown drug or route aborts the calling Node process (<span class="path">pklibraryjs.cpp:3148-3156</span>).</li>
+    <li>Tacrolimus auto-selection can return a disabled liver model.</li>
+    <li>The three-compartment closed form returns 0. Kim 2024 avoids it only because it always adds a CL time adjustment, which turns the closed form off (<span class="path">threecompartment.cpp:151, 160</span>).</li>
+    <li>To check: closed-form <code>predict_auc</code> ignores <code>num_doses</code> and the starting level; <code>LinearModel::amounts_at_time</code> ignores salt and F, which matters for IV aminophylline (salt 0.79); <code>LinearPK</code> divides by infusion time.</li>
+  </ul>
+  <h4>Engineering debt</h4>
+  <ul>
+    <li><strong>Blocking calls.</strong> No export is asynchronous, so a fit that runs up to 20 s blocks the calling service's event loop. Analytics works around this with worker threads.</li>
+    <li><strong>Thread safety.</strong> <code>Logger::times</code> is a static map, which would race across threads.</li>
+    <li><strong>Model ownership.</strong> <code>Drug</code> owns a raw <code>const Model*</code>. Calling <code>set_model</code> twice leaks the first model. Single-model drugs ignore the model name.</li>
+    <li><strong>Fixed-size arrays.</strong> Covariance and pivot arrays are 11 × 11, which caps a fit at 10 parameters.</li>
+    <li><strong>Hidden state changes.</strong> <code>predict_level</code> and <code>fit()</code> modify their object, so a fitting object can't be reused safely.</li>
+    <li><strong>Build hazards.</strong> The <code>TESTING</code> macro changes access specifiers, so classes differ between the test build and the library (a one-definition-rule hazard). <code>FRIEND_TEST</code> sits in production headers, and a "Hello World" <code>main.cpp</code> is compiled into the library.</li>
+    <li><strong>Dead code.</strong> Unselectable models, <code>model.deprecated.cpp</code>, seven <code>.disabled</code> Boost simulators, <code>runtime_test</code>, and a friend declaration for a ceftazidime class that no longer exists.</li>
+    <li><strong>Loose conventions.</strong> Units are plain doubles with correction factors applied by hand. <code>-1</code> means "not set" throughout. <code>to_route</code> matches display strings by substring.</li>
+    <li><strong>Stale docs.</strong> The README says Node 16 and npm; the package needs Node 24 and pnpm.</li>
+  </ul>
+</section>

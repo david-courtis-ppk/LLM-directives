@@ -1,0 +1,168 @@
+
+<section class="doc" id="local-dev" data-group="Run it" data-title="Local development">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web-PK</span><span>Umbrella repo</span><span>Make · Docker Compose · nginx</span></p>
+    <h2>Local development</h2>
+    <p class="summary">The umbrella repo holds almost no code. Its Makefile checks your AWS session and GitHub token, writes <code>.env</code> from Secrets Manager, and starts every backend service in Docker behind a local nginx gateway on port 80.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Entry point</dt><dd><code>make docker-compose-up</code></dd></div>
+    <div><dt>Gateway</dt><dd><code>http://localhost</code> (port 80)</dd></div>
+    <div><dt>AWS account</dt><dd>Staging, through SSO</dd></div>
+    <div><dt>Secrets</dt><dd><code>Development-Server-Secrets</code></dd></div>
+    <div><dt>Package token</dt><dd><code>.git-token</code> (gitignored)</dd></div>
+    <div><dt>Submodules</dt><dd>8, all ahead of the recorded pointers</dd></div>
+  </dl>
+
+  <h3 id="local-prereqs">Before the first run</h3>
+  <ol class="steps">
+    <li>Install Docker, AWS CLI 2.15 or newer, and <code>jq</code>. <span class="path">scripts/aws-sso-guard.sh</span> refuses to continue without them, because older CLIs have no SSO sessions.</li>
+    <li>Run <code>make docker-compose-up</code> once. If the <code>precisepk-staging-developer</code> profile is missing, the guard script offers to append it to <code>~/.aws/config</code>. It never logs you in on its own.</li>
+    <li>Run <code>aws sso login --profile precisepk-staging-developer</code>. If AWS refuses to issue credentials, your IAM Identity Center permission set has not been assigned. Only an administrator can fix that.</li>
+    <li>Create a GitHub personal access token with <code>read:packages</code> for the <code>@preciserx</code> org. The Makefile asks for it and saves it in <code>.git-token</code>. It then checks the token against the GitHub packages API.</li>
+    <li><code>.env</code> is generated on the first run. Pass <code>reset_env=true</code> to refresh it. The fetch writes to a temporary file and replaces <code>.env</code> only on success. It also refuses values that contain <code>#</code> or a newline, because <code>.env</code> parsers truncate them silently (<span class="path">Makefile:75-84, 279-295</span>).</li>
+  </ol>
+  <div class="note warn"><span class="label">Your local stack uses real staging AWS</span><p>Containers mount <code>~/.aws</code> and use the staging profile. That means real staging Cognito user pools, and the Analytics worker polls the real SQS queue (<span class="path">PreciseRx-Analytics/src/services/SQS/index.js:11-17</span>). There is no emulator.</p></div>
+
+  <h3 id="local-targets">Make targets</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Target</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="nw"><code>docker-compose-up</code></td><td>Starts Main, Database, Analytics, the Analytics worker, Databridge, Redis and the gateway. Add <code>reset_env=true</code> to refetch secrets.</td></tr>
+      <tr><td class="nw"><code>docker-compose-up-core</code></td><td>Same without Databridge, to save memory.</td></tr>
+      <tr><td class="nw"><code>docker-compose-up-gen-ai</code></td><td>Everything, including the GenAI server.</td></tr>
+      <tr><td class="nw"><code>link-pk-library-js</code></td><td>Builds your local PK-Library for Linux in Docker, symlinks it into the Main, Analytics and Databridge containers, then restarts them.</td></tr>
+      <tr><td class="nw"><code>link-preciserx-shared-js</code></td><td>Symlinks your local Shared-JS into the same containers, then runs a TypeScript watch build on the host. It never exits.</td></tr>
+      <tr><td class="nw"><code>prepare-tests</code></td><td>Runs <code>pnpm install</code> on the host for Main, Analytics and Databridge. Add <code>link_shared_js=true</code> or <code>link_pk_library_js=true</code> to test against local packages.</td></tr>
+      <tr><td class="nw"><code>checkout-all b1 [b2 …]</code></td><td>Checks out the root repo and every submodule to the first listed branch that exists on each, falling back to <code>main</code>, and pulls.</td></tr>
+      <tr><td class="nw"><code>spawn-docker-shell server=Main-Server</code></td><td>Opens a shell inside a container.</td></tr>
+      <tr><td class="nw"><code>docker-prune</code>, <code>docker-prune-all</code></td><td>Docker cleanup. The second also removes unused images and volumes.</td></tr>
+      <tr><td class="nw"><code>clear_cache</code></td><td>Drops the Linux page cache. The comment says it needs root and only works on Windows (WSL).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="local-containers">Containers, ports and profiles</h3>
+  <p>Containers with no compose profile start under every target. The three gateway containers are the same nginx image; each target starts exactly one of them. from <span class="path">docker-compose.yml</span>.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Container</th><th>Built from</th><th>Host → container</th><th>core</th><th>default</th><th>gen-ai</th></tr></thead>
+    <tbody>
+      <tr><td>Redis</td><td><code>redis:alpine</code></td><td class="nw">6379 → 6379</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Main-Server</td><td><span class="path">PreciseRx-Main/Dockerfile.dev</span></td><td class="nw">8000 → 8080</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>DB-Server</td><td><span class="path">PreciseRx-Database/Dockerfile.dev</span></td><td class="nw">8001 → 8080</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Analytics-Server</td><td><span class="path">PreciseRx-Analytics/src/Dockerfile.dev</span></td><td class="nw">8003 → 8080</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Analytics-Worker</td><td><span class="path">…/workers/predict-serum-level/Dockerfile.dev</span></td><td class="nw">none</td><td>✓</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Databridge-Server</td><td><span class="path">PreciseRx-Databridge/Dockerfile.dev</span></td><td class="nw">8002 → 8080</td><td></td><td>✓</td><td>✓</td></tr>
+      <tr><td>Gen-AI-Server</td><td><span class="path">PreciseRx-GenAI/Dockerfile.dev</span></td><td class="nw">8004 → 80</td><td></td><td></td><td>✓</td></tr>
+      <tr><td>API-Gateway-*</td><td><span class="path">src/services/nginx</span></td><td class="nw">80 → 8000</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>Source is bind-mounted, so Node services reload through nodemon. Database runs gunicorn without <code>--reload</code>, so Python edits need a container restart.</li>
+    <li><code>~/.aws</code> is mounted to <code>/home/node/.aws</code> for Node, <code>/home/appuser/.aws</code> for Database, and <code>/root/.aws</code> for GenAI, which runs as root.</li>
+    <li>Every container loads the whole <code>.env</code>. GenAI also loads <code>.env.local</code>.</li>
+    <li>Database and GenAI have no <code>depends_on: redis</code>. Both need Valkey at boot and rely on <code>restart: on-failure</code>.</li>
+  </ul>
+
+  <h3 id="gateway">How the gateway routes</h3>
+  <p>Each public prefix is rewritten to an internal location and then proxied with the prefix removed. from <span class="path">src/services/nginx/conf.d/*.conf</span> and <span class="path">api_backends.conf</span>.</p>
+  <pre><code>/main/v1/prediction/dose/output
+   → rewrite to /_main/prediction/dose/output   (internal location)
+   → proxy_pass http://main_upstream/prediction/dose/output
+   → main_upstream = kubernetes.docker.internal:8000   (the host's published port)</code></pre>
+  <div class="tbl"><table>
+    <thead><tr><th>Public prefix</th><th>Upstream</th><th>Timeouts</th><th>Extras</th></tr></thead>
+    <tbody>
+      <tr><td><code>/main/v1</code></td><td>:8000</td><td>120 s</td><td>none</td></tr>
+      <tr><td><code>/database/v1</code></td><td>:8001</td><td>nginx default</td><td>none</td></tr>
+      <tr><td><code>/databridge/v1</code></td><td>:8002</td><td>nginx default</td><td>Injects an <code>X-API-Key</code> header on five routes: Epic launch and callback, Oracle Health authorization URL and tokens, and Sentri7 tokens.</td></tr>
+      <tr><td><code>/analysis/v1</code></td><td>:8003</td><td>120 s</td><td>A separate <code>/socketio</code> location with WebSocket upgrade headers.</td></tr>
+      <tr><td><code>/gen-ai/v1</code></td><td>:8004</td><td>nginx default</td><td>none</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>nginx proxies through the host's published ports (<code>kubernetes.docker.internal</code>), not the compose network, so a service is reachable only while its port is published.</li>
+    <li>Request bodies are capped at 5 MB (<span class="path">api_gateway.conf</span>).</li>
+    <li>JSON error pages exist in <span class="path">api_json_errors.conf</span> but are commented out, so backend error bodies reach the browser unchanged.</li>
+    <li>Every location forwards <code>X-Real-IP</code>, <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> (RX-3432, forwarding the real client IP).</li>
+  </ul>
+  <p>The frontend reaches this gateway through <code>VITE_SERVER_BASE_URL=http://localhost</code> and the socket path <code>/analysis/v1/socketio</code> (<span class="path">PreciseRx-Web/.env</span>, <span class="path">src/actions/AxiosRequestWrappers/Constants.ts:25-31</span>). The frontend also defines a <code>machine_learning/v1</code> prefix that no gateway route serves.</p>
+
+  <h3 id="env-vars">Environment variables</h3>
+  <p><code>.env</code> has about 100 keys, and every container sees all of them. Grouped by what they configure. Values are not reproduced here.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Group</th><th>Keys</th><th>Read by</th></tr></thead>
+    <tbody>
+      <tr><td>Runtime</td><td><code>NODE_ENV</code>, <code>NODE_SERVER_ENV</code> (API version, <code>v1</code>), <code>SERVER_PORT</code></td><td>all</td></tr>
+      <tr><td>Service URLs</td><td><code>DB_SERVICE_ENDPOINT</code>, <code>MAIN_SERVICE_ENDPOINT</code>, <code>GENAI_SERVICE_ENDPOINT</code>, <code>PPK_API_GATEWAY_URL</code>, <code>PPK_CLIENT_URL</code>, <code>PPK_PARENT_DOMAIN</code></td><td>Node services, Database</td></tr>
+      <tr><td>Main Cognito pool</td><td><code>PPK_AWS_USER_POOL_ID</code>, <code>PPK_AWS_APP_CLIENT_ID</code>, <code>PPK_AWS_ISS</code>, <code>PPK_AWS_JWK</code>, <code>PPK_AWS_OAUTH_ENDPOINT</code>, <code>IDENTITY_POOL_ID</code></td><td>all</td></tr>
+      <tr><td>Other pools</td><td><code>SSO_*</code>, <code>EPIC_USER_POOL_*</code>, <code>ORACLE_HEALTH_USER_POOL_*</code>, <code>SENTRI7_*</code>, <code>SENTRI7_V2_*</code>, <code>SOLANA_*</code> (unused)</td><td>all verify tokens</td></tr>
+      <tr><td>Roles</td><td><code>PPK_ADMIN_ROLE</code>, <code>PPK_USER_ROLE</code>, <code>PPK_IAM_ROLE</code>, <code>PPK_ANALYTICS_ROLE</code>, <code>PPK_MULTI_SITE_ADMIN_ROLE</code> (required at boot, never enforced)</td><td>Main, Database</td></tr>
+      <tr><td>EHR partners</td><td><code>EPIC_CLIENT_ID</code>, <code>EPIC_SECRET_NAME</code>, <code>EPIC_*_ENDPOINT</code>, <code>ORACLE_HEALTH_CLIENT_*</code>, <code>ORACLE_HEALTH_*_ISS</code></td><td>Databridge</td></tr>
+      <tr><td>API keys</td><td><code>DATABRIDGE_API_KEY</code> (gateway → Databridge), <code>DATABASE_EHR_API_KEY</code> (Databridge → Database), <code>LAMBDA_API_KEY</code> (Cognito Lambdas → Database)</td><td>Databridge, Database</td></tr>
+      <tr><td>Database</td><td><code>RDS_SECRET_ARN</code> (the only one used), other <code>RDS_*</code>, <code>POSTGRESQL_*</code> (unused)</td><td>Database</td></tr>
+      <tr><td>Cache and queue</td><td><code>REDIS_URL</code>, <code>REDIS_ENDPOINT</code>, <code>SENTRI7_REDIS_URL</code> (holds all EHR sessions), <code>AWS_SQS_NAME</code>, <code>AWS_SQS_SERVICE_ENDPOINT</code>, <code>AWS_ACCOUNT_ID</code></td><td>Node services</td></tr>
+      <tr><td>Observability</td><td><code>DATADOG_API_KEY</code>, <code>DATADOG_APP_KEY</code></td><td>Main (log relay)</td></tr>
+      <tr><td>Unused</td><td><code>STATE_SIGNING_KEY</code>, <code>KMS_KEY_ID</code>, <code>AWS_SQS_ACCESS_KEY_ID</code>, <code>AWS_SQS_SECRET_ACCESS_KEY</code></td><td>nothing reads them</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="linking">Working on PK-Library or Shared-JS locally</h3>
+  <p>The services install published versions from GitHub Packages. To run them against your local checkout:</p>
+  <ol class="steps">
+    <li>Start the stack, then run <code>make link-pk-library-js</code>. It builds a musl Linux binary with Docker buildx (<span class="path">PK-Library/scripts/prebuild-linux/</span>) and replaces each container's <code>node_modules/@preciserx/pk-library-js</code> with a symlink to the bind-mounted source. Then it restarts the containers.</li>
+    <li>Rebuild after each C++ change by running the target again.</li>
+    <li>Recreate the containers (<code>make docker-compose-up</code>) to return to the published version.</li>
+  </ol>
+  <p>The Makefile uses a direct symlink rather than <code>pnpm link</code>. Its comment explains that <code>pnpm link</code> in these containers often reports "Already up to date" and leaves the published version in place. The pnpm store is also forced onto the container's own filesystem, because a store on the macOS bind mount fails intermittently with <code>EPERM</code> (<span class="path">Makefile:109-128</span>).</p>
+
+  <h3 id="submodule-drift">Submodule pointers are stale</h3>
+  <p>The umbrella last recorded submodule commits on 2026-06-24 (RX-3468, the npm-to-pnpm switch). Every checkout has moved on since, which is why <code>git submodule status</code> shows <code>+</code> on all of them.</p>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Submodule</th><th>Recorded</th><th>Checked out</th><th class="num">Commits ahead</th></tr></thead>
+    <tbody>
+      <tr><td>PreciseRx-Database</td><td><code>23197fb7</code></td><td><code>41050ca5</code></td><td class="num">145</td></tr>
+      <tr><td>PreciseRx-Analytics</td><td><code>65755f9f</code></td><td><code>a3ffc2f4</code></td><td class="num">27</td></tr>
+      <tr><td>PreciseRx-Main</td><td><code>44360c37</code></td><td><code>16b95c21</code></td><td class="num">25</td></tr>
+      <tr><td>PreciseRx-Databridge</td><td><code>f890f57e</code></td><td><code>ebe65241</code></td><td class="num">20</td></tr>
+      <tr><td>PreciseRx-GenAI</td><td><code>1d34e16e</code></td><td><code>1920cb0d</code></td><td class="num">19</td></tr>
+      <tr><td>PreciseRx-Shared-JS</td><td><code>2fcac8b1</code></td><td><code>f2abc46e</code></td><td class="num">10</td></tr>
+      <tr><td>PK-Library</td><td><code>19f001bc</code></td><td><code>d19f42f3</code></td><td class="num">8</td></tr>
+      <tr><td>PreciseRx-Shared-Python</td><td><code>3f7cc23f</code></td><td><code>62bcb864</code></td><td class="num">2</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note warn"><span class="label">Don't run git submodule update</span><p>It checks out the recorded commits, which would roll every service back by weeks or months. Use <code>make checkout-all main</code>, or name your feature branches, to move everything together.</p></div>
+
+  <h3 id="umbrella-dead">Files you can ignore</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>File</th><th>Why it's stale</th></tr></thead>
+    <tbody>
+      <tr><td><code>k8s/</code></td><td>Uses the removed <code>extensions/v1beta1</code> Ingress API. The Service is named <code>client-cluster-ip-service</code>, but the Ingress points at <code>pk-main-cluster-ip-service</code>. It targets port 8000, while containers now listen on 8080.</td></tr>
+      <tr><td><code>skaffold.yaml</code></td><td>Points at <code>src/apis/preciserx-main</code>, but the directory is capitalized <code>PreciseRx-Main</code>.</td></tr>
+      <tr><td><code>.travis.yml</code></td><td>Deploys to Elastic Beanstalk from <code>master</code> into a bucket named <code>somes3bucket</code>.</td></tr>
+      <tr><td><code>src/services/rabbitmq/</code></td><td>Not referenced by <code>docker-compose.yml</code>.</td></tr>
+      <tr><td><code>sudo</code> (root file)</td><td>Contains <code>1 /proc/sys/vm/compact_memory</code>. It looks like stray output from the <code>clear_cache</code> target.</td></tr>
+      <tr><td><code>.gitmodules</code> QtSimpleCrypt entry</td><td>Declared, but the index has no gitlink for it, so it never checks out.</td></tr>
+      <tr><td><code>--profile optional</code></td><td>Used by <code>docker-compose-up-gen-ai</code>, but no service declares that profile. Harmless.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="umbrella-tooling">Editor and repo tooling</h3>
+  <ul>
+    <li><span class="path">.vscode/settings.json</span> points C++ TestMate at <code>src/packages/cpp/PK-Library/build/test/PKLibrary_tst</code> and CMake Tools at the PK-Library source and build directories. The C++ compiler is <code>/opt/homebrew/bin/g++-14</code>, and C++ format-on-save is off.</li>
+    <li>Jest "virtual folders" let the VS Code Jest extension run the Main, Analytics and Databridge suites with <code>pnpm test --</code>, on demand.</li>
+    <li>Python files format with black on save, and Pylance type checking is set to <code>standard</code>.</li>
+    <li><span class="path">.claude/skills/</span> holds two Claude Code skills: <code>diagram</code> (Mermaid styling) and <code>fix-dependabot</code>.</li>
+    <li>Dependabot checks npm daily at the root. The pull request template has four sections: Issue, Proposed Changes, Additional Info, and Checklist.</li>
+  </ul>
+  <h5>Recent umbrella commits</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Commit</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>dade744b</code></td><td>nginx forwards the client IP to upstream APIs (RX-3432).</td></tr>
+      <tr><td><code>354952d4</code></td><td>Local and staging use <code>aws sso login</code> instead of long-lived keys (RX-3574).</td></tr>
+      <tr><td><code>ba06451e</code></td><td>Added the <code>/fix-dependabot</code> skill (RX-3505).</td></tr>
+      <tr><td><code>8140719c</code></td><td>Makefile link targets reliably link local packages into containers (RX-3494).</td></tr>
+      <tr><td><code>c5bdccfc</code></td><td>Switched from npm to pnpm to reduce supply-chain risk, and bumped every submodule pointer (RX-3468).</td></tr>
+    </tbody>
+  </table></div>
+</section>

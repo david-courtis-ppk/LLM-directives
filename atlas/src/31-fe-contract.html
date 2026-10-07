@@ -1,0 +1,33 @@
+
+<section class="doc" id="fe-contract" data-group="Frontend (PreciseRx-Web)" data-title="Endpoint contract">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>src/actions/</span></p>
+    <h2>Frontend-to-backend contract</h2>
+    <p class="summary">Every call the browser makes through the HTTP wrapper: {{CONTRACT_COUNT}} calls across 27 action files. Paths are relative to <code>{host}{service}/{lane}</code>. Use this table to find which screen calls an endpoint before you change it.</p>
+  </header>
+  <p><strong>Flags:</strong> <strong>C</strong> means the caller handles errors itself (<code>customErrorHandler</code>). "Cancel duplicates" aborts an in-flight identical call. "Ignore stale" drops out-of-order responses.</p>
+  <div class="toc-filter" style="max-width:420px">
+    <label for="contract-filter">Filter the table</label>
+    <input id="contract-filter" type="search" placeholder="e.g. fit-and-plot, database, IAMActions" autocomplete="off">
+  </div>
+  <p class="mono" id="contract-count" style="font-size:12px;color:var(--muted)">{{CONTRACT_COUNT}} calls</p>
+  <div class="tbl compact"><table id="contract-table">
+    <thead><tr><th>Method</th><th>Service</th><th>Path</th><th>Called by</th><th>Notes</th></tr></thead>
+    <tbody>
+{{CONTRACT_ROWS}}
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-direct">Calls that bypass the wrapper</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Caller</th><th>Target</th><th>Auth</th></tr></thead>
+    <tbody>
+      <tr><td>Epic import</td><td><code>GET {iss}/Patient/{id}</code>; <code>Observation</code> for vitals (height LOINC 8302-2, weight 3141-9 and 29463-7), SCr (2160-0), 19 CrCl codes, and drug levels; <code>MedicationRequest?_include=MedicationRequest:medication</code>; <code>POST …/epic/2014/Clinical/Patient/GETMEDICATIONADMINISTRATIONHISTORY/MedicationAdministration</code> (Epic's private MAR API, billed per call).</td><td>Bearer token from the <code>_epic_access_token</code> cookie</td></tr>
+      <tr><td>Oracle Health import</td><td><code>GET {trustedIssuerUrl}/Patient/{id}</code>, <code>Observation</code>, <code>MedicationAdministration?status=completed</code>.</td><td>Bearer token from the <code>_o_h_access_token</code> cookie</td></tr>
+      <tr><td>Token refresh</td><td><code>POST main/{lane}/auth/tokens</code>, throttled to once per 10 s.</td><td>cookies</td></tr>
+      <tr><td>SSO sign-in</td><td>Browser redirect to the Cognito hosted UI.</td><td>Cognito code flow</td></tr>
+      <tr><td>Model Analytics</td><td>Socket.IO <code>/serum-analysis</code>.</td><td>cookies</td></tr>
+      <tr><td>Sentri7 simulator</td><td><code>POST …/databridge/{lane}/sentri7/import</code> to a hard-coded host per environment.</td><td><code>x-auth-code</code></td></tr>
+    </tbody>
+  </table></div>
+</section>

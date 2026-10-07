@@ -1,0 +1,148 @@
+
+<section class="doc" id="main" data-group="Backend services" data-title="Main">
+  <header>
+    <p class="eyebrow"><span>src/apis/PreciseRx-Main</span><span>JavaScript</span><span>Express 4</span><span>/main/v1</span></p>
+    <h2>PreciseRx-Main</h2>
+    <p class="summary">Main is the API behind every clinical calculation and every sign-in. Each clinical route validates a JSON body and makes one or more synchronous calls into PK-Library. Main also runs Cognito sign-in and the user-administration screens. It stores no patient data.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Runtime</dt><dd>Node ≥ 24, pnpm 11.4, CommonJS, no build step</dd></div>
+    <div><dt>Framework</dt><dd>Express 4.22 + express-async-errors</dd></div>
+    <div><dt>Validation</dt><dd>Joi 18</dd></div>
+    <div><dt>Engine</dt><dd><code>@preciserx/pk-library-js</code> 1.6.1</dd></div>
+    <div><dt>Shared</dt><dd><code>@preciserx/preciserx-shared-js</code> 1.13.5</dd></div>
+    <div><dt>Routes</dt><dd>71 handlers</dd></div>
+    <div><dt>Local</dt><dd>Main-Server, host :8000</dd></div>
+    <div><dt>Tests</dt><dd>30 Jest files, ~167 cases</dd></div>
+  </dl>
+
+  <h3 id="main-layout">Layout</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td class="path">src/server.js</td><td>Checks env vars, connects to Valkey (exits if it can't), listens on <code>SERVER_PORT</code> with a 30 s socket timeout.</td></tr>
+      <tr><td class="path">src/env.js</td><td>About 55 required env vars. It warns on each missing one, and the process exits if any are absent.</td></tr>
+      <tr><td class="path">src/schemas.js</td><td>Shared Joi schemas: patient, drug, settings, PK parameters, histories, IAM payloads.</td></tr>
+      <tr><td class="path">src/feature-whitelist.js</td><td>Hard-coded per-environment lists of which institutions see which drugs.</td></tr>
+      <tr><td class="path">src/controllers/&lt;area&gt;/</td><td>One Express router per URL area, and one file per handler, named <code>&lt;verb&gt;-&lt;path&gt;.js</code>.</td></tr>
+      <tr><td class="path">src/middleware/</td><td>Token and role checks (<code>authorize.js</code>), token pairing, revocation, per-request Cognito client (<code>extract-user-info.js</code>), <code>drugFilter.js</code>.</td></tr>
+      <tr><td class="path">src/services/</td><td><code>database.js</code> (client for the Database API), <code>interservice-client.js</code> (the axios base), <code>drug.js</code>, <code>token-revocation.js</code>.</td></tr>
+      <tr><td class="path">src/utils/</td><td>Valkey client, cookie helpers, the <code>validate</code> wrapper, the same-license check, rate limiters.</td></tr>
+      <tr><td class="path">src/__models__/redux/</td><td>Builders that mimic the frontend's Redux state. Only tests use them, but they ship in the image.</td></tr>
+      <tr><td class="path">docs/</td><td>An OpenAPI 3.0 spec, last touched 2025-11-21. It lists routes that no longer exist and omits most of <code>/auth</code>, <code>/logs</code> and <code>/iam</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="main-chain">Middleware order</h3>
+  <ol class="steps">
+    <li><code>trust proxy</code> set by private CIDR ranges, so <code>req.ip</code> is the real client (RX-3432). ETags are off.</li>
+    <li>helmet, with HSTS for one year; the Morgan access log from Shared-JS; CORS for the single origin <code>PPK_CLIENT_URL</code> with credentials; body parsers (2 MB); <code>sanitizeCookies</code>; compression.</li>
+    <li>Unauthenticated routes: <code>POST /status</code>, <code>GET /HealthCheck</code>, and everything under <code>/auth</code>.</li>
+    <li>Authentication chain: <code>validateAccessToken</code> → <code>validateIdToken</code> → <code>validateTokenPairing</code> → <code>validateAccountRevocation</code>. A test locks in this order (<span class="path">test/controllers/authentication-chain.test.js</span>).</li>
+    <li>Routers: <code>/</code>, <code>/admin</code>, <code>/aki</code>, <code>/drug</code>, <code>/iam</code>, <code>/pharmacokinetics</code>, <code>/prediction</code>, <code>/search</code>, <code>/user</code>, <code>/logs</code>. Each adds its own role check.</li>
+    <li>The shared <code>ErrorHandlerMiddleware</code>. Anything that isn't an <code>ApplicationError</code> becomes a 500.</li>
+  </ol>
+  <p>Source: <span class="path">src/controllers/index.js:54-89</span>.</p>
+
+  <h3 id="main-routes">Routes</h3>
+  <p>Paths are as Main sees them; the gateway strips <code>/main/v1</code>. Role codes: <strong>A/U</strong> means admin or user, <strong>A</strong> admin only, <strong>A/IAM</strong> admin or IAM, and <strong>T</strong> a valid token with no role check.</p>
+  <h5>Sign-in: /auth (no token; 100 requests/min per IP, counted per process)</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/login</code></td><td>Email and password sign-in through Cognito <code>AdminInitiateAuth</code>. It sets the three token cookies, or returns an MFA or new-password challenge.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/logout</code></td><td>Signs out globally if an access token is present and clears the cookies.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/auth/status</code></td><td>Login-page check. Verifies the access token and revocation, and returns <code>{authenticated}</code>.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/tokens</code></td><td>Returns 204 if both tokens have more than 5 minutes left. Otherwise it refreshes them and resets the cookies.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/sign-up</code></td><td>Completes an invited user's first sign-in and sets their name and phone number.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/auth/reset-password</code>, <code>/auth/confirm-reset-password</code></td><td>Cognito forgot-password flow.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/auth/token</code></td><td>OAuth callback for SSO and Sentri7. Exchanges <code>?code=</code>, checks roles, sets cookies and redirects.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/auth/analytics</code></td><td>Whether the caller's institution is on a hard-coded list of five that may use analytics.</td></tr>
+    </tbody>
+  </table></div>
+  <h5>Clinical (A/U)</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/metadata</code> (T)</td><td>Bootstrap data from PK-Library: AKI criteria, dialysis routes, units, target ranges, supported settings.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/pharmacokinetics/bayesian-prior</code></td><td>Population (prior) PK parameters and derived values.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/pharmacokinetics/bayesian-post</code></td><td>Fits parameters to the measured levels (<code>fit</code>).</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/pharmacokinetics/{age, body-composition, crcl, gfr, free-fraction, renal-parameters}</code></td><td>Patient calculations.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/pharmacokinetics/{models, patient-models, default-model}</code></td><td>A drug's models, the ones valid for this patient, and the auto-selected one.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/pharmacokinetics/derived-parameters</code>, <code>/local-population</code></td><td>Re-derive from edited parameters. Compute from institution coefficients, fetched from Database.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/drug/monitoring/{settings, fit-and-plot, dose-analytics, ranges}</code></td><td>Drug Monitoring screen: default fitting settings, the fitted graph, per-dose analytics, therapeutic and toxic bands.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/drug/therapeutic-target/{options, recommendation, recalculate}</code></td><td>Target options, a recommended regimen (PK-Library error codes become 400 or 500), and recalculation after the user edits the regimen.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/prediction/dose/{inputs, output, nomogram}</code></td><td>Dose prediction inputs, the regimen (<code>dosage_regimen</code>), and the nomogram grid.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/prediction/serum/{inputs, output}</code></td><td>Steady-state forecast.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/prediction/targets</code></td><td>Deprecated and unvalidated.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/search/case</code>, <code>/search/case/{models, pharmacokinetics}</code></td><td>Recomputes everything derived for a loaded case (about 15 PK-Library calls), its models, and prior plus posterior PK.</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/drug</code>, <code>/drug/{list, routes, metadata, factors, factors/warnings}</code></td><td>Drug information, the licensed drug list, routes, metadata, and patient-factor questions and warnings.</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/aki/criteria-information</code>, <code>/aki/assessment</code></td><td>RIFLE, AKIN and KDIGO definitions, and AKI staging from creatinine history.</td></tr>
+    </tbody>
+  </table></div>
+  <h5>Administration and account</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span>/<span class="pill put">PUT</span></td><td><code>/iam/users</code></td><td>List users in the caller's license, or invite up to 10 emails.</td><td>A/IAM</td></tr>
+      <tr><td><span class="pill put">PUT</span>/<span class="pill del">DEL</span></td><td><code>/iam/users/groups</code>, <code>/iam/user/group</code></td><td>Add or remove Cognito groups for up to 10 users, or for one user (with an Epic facility conflict check).</td><td>A/IAM</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/iam/user/{disable, enable, resend-invitation}</code></td><td>Disable signs the user out everywhere and writes a revocation flag. Enable clears the flag. Resend-invitation issues a new temporary password.</td><td>A/IAM</td></tr>
+      <tr><td><span class="pill del">DEL</span></td><td><code>/iam/user</code></td><td>Signs the user out, writes a revocation flag, deletes the Cognito user, then deletes the Database <code>user_info</code> row.</td><td>A/IAM</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/admin</code>, <code>/iam</code></td><td>Role probes that return 204.</td><td>A, A/IAM</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/user</code>, <code>/user/{roles, info, logout-info, attributes, password, revoke-token}</code></td><td>The signed-in user's roles, attributes, password and logout target.</td><td>T</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/logs/errors</code>, <code>/logs/forms</code></td><td>Forwards client payloads and the user's email to a Datadog workflow. No rate limit.</td><td>T</td></tr>
+      <tr><td><span class="pill get">GET</span>/<span class="pill post">POST</span></td><td><code>/HealthCheck</code>, <code>/status</code></td><td>Health checks. <code>POST /status</code> never sends a response.</td><td>none</td></tr>
+    </tbody>
+  </table></div>
+  <p>IAM calls run under the <em>caller's own</em> AWS role, obtained through the Cognito identity pool (<span class="path">src/utils/cognito-utilities.js:31-49</span>). The IAM policy on that role is therefore a second guard, and it isn't in this repo. Rate limits: invites allow 1 per second per caller, and resend-invitation allows 5 per hour per recipient. Both are shared through Redis. The other IAM limits are counted per process.</p>
+
+  <h3 id="main-validation">Validation is advisory</h3>
+  <p>46 controller files call <code>const { value } = validate(…)</code> and ignore the <code>error</code>. <code>validate()</code> logs errors without the value, then returns both, and the handler carries on with whatever came in. Only the IAM and logs handlers reject bad input. (<span class="path">src/utils/validation.js:36-84</span>; <span class="path">prediction/dose/post-output.js:29</span>)</p>
+  <p>Combined with the engine's error handling, a malformed request can come back as <code>200 {}</code>. Joi's default message for a failed pattern includes the value, so a malformed birthday could reach the logs next to the username and license.</p>
+
+  <h3 id="main-deps">What Main calls</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Dependency</th><th>How</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr><td>Database API</td><td>axios, base URL <code>DB_SERVICE_ENDPOINT</code>. It sends an <code>x-api-version</code> header and forwards the user's cookies. No timeout is set.</td><td>IAM groups, stats (cached for 1 day), sites and facility groups, population coefficients, license info, SSO logout URL, drug package, and inserting or deleting <code>user_info</code>.</td></tr>
+      <tr><td>Valkey</td><td><code>redis</code> v4. One client for revocation keys (TLS outside development) and one for rate limiting (no TLS option).</td><td>Writing and reading <code>revoked:user:&lt;sub&gt;</code>; shared rate limits.</td></tr>
+      <tr><td>Cognito</td><td>AWS SDK v3. The task role handles login and sign-up; the caller's role handles admin and self-service calls.</td><td>Sign-in, refresh, sign-out, users and groups.</td></tr>
+      <tr><td>Datadog</td><td>axios POST to a workflow URL with API and app keys.</td><td>Relaying client error and form logs.</td></tr>
+      <tr><td>Analytics, GenAI</td><td>Not called.</td><td>none</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="main-tests">Tests and build</h3>
+  <ul>
+    <li><strong>Test setup.</strong> Jest 30, supertest and sinon. The token and role middleware is stubbed before the app is required (<span class="path">test/.test-ignore/test_config.js:63-96</span>).</li>
+    <li><strong>The engine is not mocked.</strong> Controller tests run the real addon. Most assertions only check for HTTP 200. The three fixtures named amikacin, busulfan and vancomycin are all amikacin with the same patient.</li>
+    <li><strong>Running them.</strong> On the host, run <code>GIT_TOKEN=… pnpm install --frozen-lockfile &amp;&amp; pnpm test</code>. The dev container doesn't copy <code>test/</code>. CI runs the same on every pull request, with no lint step.</li>
+    <li><strong>Images.</strong> <code>Dockerfile</code> is for production, <code>Dockerfile.staging</code> for staging, and <code>Dockerfile.dev</code> for local development, built from the umbrella root.</li>
+    <li><strong>Jenkins.</strong> It builds on arm64 and pushes to Docker Hub, tagged with the last segment of the branch name. It runs no tests and has no deploy step.</li>
+  </ul>
+  <div class="note warn"><span class="label">Production Dockerfile has no package token</span><p>Jenkins passes the GitHub Packages token as a BuildKit secret, <code>--secret id=git_token</code>. <span class="path">Dockerfile.staging:20-22</span> mounts it. <span class="path">Dockerfile:22</span> runs <code>pnpm install</code> without the mount, so <code>${GIT_TOKEN}</code> in <code>.npmrc</code> is empty there. The two diverged in commit <code>44360c3</code> (RX-3468, 2026-06-24). Production builds may be succeeding only from the build agent's warm pnpm cache.</p></div>
+
+  <h3 id="main-quirks">Other quirks</h3>
+  <ul>
+    <li><code>POST /status</code> calls <code>response.status(204)</code> without <code>.send()</code>, so it never responds.</li>
+    <li>The Sentri7 logout check compares against <code>'SENTRI_7'</code>, but the provider value is <code>'sentri7'</code>, so it never matches (<span class="path">get-logout-info.js:64-65</span>).</li>
+    <li><code>/auth/login</code> returns an <code>MFA_REQUIRED</code> challenge, but no route answers it.</li>
+    <li>The drug package is not enforced on calculations. Any drug name reaches <code>/pharmacokinetics</code> and <code>/prediction</code>.</li>
+    <li>The SSO launch sets the refresh cookie for 1 hour instead of 1 day.</li>
+    <li><code>sinon</code> and <code>supertest</code> are production dependencies. <code>PPK_MULTI_SITE_ADMIN_ROLE</code> is required at boot and never read.</li>
+  </ul>
+  <h5>Recent commits on main</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Commit</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>16b95c2</code></td><td>Reverted the second allowed CORS origin (RX-3660).</td></tr>
+      <tr><td><code>7c5b33d</code></td><td>User delete sends the lowercase query keys Database expects (RX-3482).</td></tr>
+      <tr><td><code>3237d29</code></td><td>Fixed a crash on requests with no cookies, and moved cookie parsing and token checks into Shared-JS (RX-3576).</td></tr>
+      <tr><td><code>02cc42e</code></td><td>Token refresh keys off whichever token expires first (RX-3625).</td></tr>
+      <tr><td><code>67c72fb</code></td><td>Rejects access and id tokens from different users (RX-3606).</td></tr>
+      <tr><td><code>bd10d03</code></td><td>Trusts internal proxy hops by CIDR (RX-3432).</td></tr>
+      <tr><td><code>0463a29</code></td><td>PK-Library 1.6.1 (RX-3596).</td></tr>
+      <tr><td><code>1ad911b</code></td><td>Token revocation on disable and delete (RX-3302).</td></tr>
+    </tbody>
+  </table></div>
+</section>

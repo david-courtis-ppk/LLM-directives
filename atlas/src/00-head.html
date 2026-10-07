@@ -1,0 +1,255 @@
+<title>PreciseRx Codebase Atlas</title>
+<meta name="description" content="A source-cited guide to every repository behind PrecisePK: the web app, five backend services, the C++ dosing engine and the shared libraries.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --bg:#F3F6F7; --surface:#FFFFFF; --surface-2:#E8EEF1; --surface-3:#DCE5EA;
+  --ink:#14202B; --ink-2:#34434F; --muted:#5F7081; --rule:#D3DCE2; --rule-strong:#B7C4CD;
+  --accent:#2B50AA; --accent-ink:#1E3B82; --accent-wash:#DFE7F8; --accent-band:rgba(43,80,170,.14);
+  --crit:#B42318; --crit-wash:#FBE7E5; --warn:#9A5B05; --warn-wash:#FBEFD9; --ok:#1D7447; --ok-wash:#DDF1E6;
+  --info:#2B50AA; --info-wash:#DFE7F8;
+  --font-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --nav-w:280px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0D141B; --surface:#141D26; --surface-2:#1A2530; --surface-3:#22303D;
+    --ink:#E3EAF0; --ink-2:#BCC8D2; --muted:#8798A8; --rule:#27333F; --rule-strong:#384756;
+    --accent:#90A9FF; --accent-ink:#B6C6FF; --accent-wash:#1C2847; --accent-band:rgba(144,169,255,.18);
+    --crit:#FF8A7E; --crit-wash:#3A1B1A; --warn:#F2B75B; --warn-wash:#35280F; --ok:#6AD3A0; --ok-wash:#12301F;
+    --info:#90A9FF; --info-wash:#1C2847;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0D141B; --surface:#141D26; --surface-2:#1A2530; --surface-3:#22303D;
+  --ink:#E3EAF0; --ink-2:#BCC8D2; --muted:#8798A8; --rule:#27333F; --rule-strong:#384756;
+  --accent:#90A9FF; --accent-ink:#B6C6FF; --accent-wash:#1C2847; --accent-band:rgba(144,169,255,.18);
+  --crit:#FF8A7E; --crit-wash:#3A1B1A; --warn:#F2B75B; --warn-wash:#35280F; --ok:#6AD3A0; --ok-wash:#12301F;
+  --info:#90A9FF; --info-wash:#1C2847;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:var(--accent);text-underline-offset:2px}
+a:hover{color:var(--accent-ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+::selection{background:var(--accent-wash)}
+
+/* masthead */
+.masthead{border-bottom:1px solid var(--rule);background:var(--surface)}
+.masthead-inner{max-width:1360px;margin:0 auto;padding-inline:24px;padding-block:28px 22px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,640px);gap:32px;align-items:end}
+.masthead h1{font-family:var(--font-display);font-weight:700;font-size:clamp(2rem,4.2vw,3.1rem);line-height:1.02;letter-spacing:-.01em;margin:0 0 12px;text-wrap:balance}
+.masthead .kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.masthead .lede{color:var(--ink-2);max-width:60ch;margin:0 0 14px;font-size:15.5px}
+.masthead .meta{display:flex;flex-wrap:wrap;gap:8px 18px;font-family:var(--font-mono);font-size:12px;color:var(--muted);margin:0;padding:0;list-style:none}
+.masthead .meta b{color:var(--ink);font-weight:500}
+.curve{margin:0}
+.curve svg{display:block;width:100%;height:auto;color:var(--muted)}
+.curve figcaption{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+.menu-btn{display:none}
+@media (max-width: 980px){
+  .masthead-inner{grid-template-columns:1fr;align-items:start}
+}
+
+/* layout */
+.layout{max-width:1360px;margin:0 auto;padding-inline:24px;display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);gap:44px}
+.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;max-height:100vh;max-height:100dvh;overflow-y:auto;padding-block:22px 40px;scrollbar-width:thin}
+.toc-filter{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.toc-filter label{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.toc-filter input{font:inherit;font-size:14px;color:var(--ink);background:var(--surface);border:1px solid var(--rule-strong);border-radius:4px;padding:7px 10px;width:100%}
+.toc-filter input::placeholder{color:var(--muted)}
+.toc-group{margin:0 0 16px}
+.toc-group > h2{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+.toc ul{list-style:none;margin:0;padding:0}
+.toc li a{display:block;text-decoration:none;color:var(--ink-2);font-size:13.5px;line-height:1.35;padding:4px 8px;border-radius:3px}
+.toc li a:hover{background:var(--surface-2);color:var(--ink)}
+.toc li a[aria-current="true"]{background:var(--accent-wash);color:var(--accent-ink);font-weight:500}
+.toc li ul{margin:2px 0 6px 10px;border-left:1px solid var(--rule)}
+.toc li ul a{font-size:12.5px;padding:3px 8px;color:var(--muted)}
+.toc .toc-sub[hidden]{display:none}
+.toc-empty{font-size:13px;color:var(--muted)}
+main{min-width:0;padding-block:8px 160px}
+@media (max-width: 900px){
+  .layout{grid-template-columns:1fr;gap:0}
+  .toc{position:static;max-height:none;border-bottom:1px solid var(--rule);padding-block:16px}
+  .menu-btn{display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:13px;font-family:var(--font-mono);color:var(--ink);background:var(--surface-2);border:1px solid var(--rule-strong);border-radius:4px;padding:6px 12px;cursor:pointer}
+}
+
+/* sections and type */
+.doc{border-top:1px solid var(--rule);padding-block:44px 8px}
+.doc:first-child{border-top:0}
+.doc > header{margin-bottom:22px}
+.eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0 0 8px;display:flex;flex-wrap:wrap;gap:6px 14px}
+.eyebrow span+span::before{content:"/";margin-right:14px;color:var(--rule-strong)}
+.doc h2{font-family:var(--font-display);font-weight:600;font-size:clamp(1.65rem,2.6vw,2.15rem);line-height:1.12;letter-spacing:-.005em;margin:0 0 10px;text-wrap:balance}
+.doc h3{font-family:var(--font-display);font-weight:600;font-size:1.32rem;line-height:1.2;margin:38px 0 10px;text-wrap:balance}
+.doc h4{font-family:var(--font-body);font-weight:600;font-size:1rem;margin:26px 0 8px}
+.doc h5{font-family:var(--font-mono);font-weight:500;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:22px 0 8px}
+.doc p,.doc li{max-width:74ch}
+.doc p{margin:0 0 12px}
+.doc ul,.doc ol{padding-left:1.25em;margin:0 0 14px}
+.doc li{margin:0 0 5px}
+.doc li > ul,.doc li > ol{margin-top:5px}
+.summary{font-size:16.5px;color:var(--ink-2);max-width:68ch;margin:0 0 6px}
+code,kbd,.mono{font-family:var(--font-mono);font-size:.88em}
+code{background:var(--surface-2);border-radius:3px;padding:.05em .32em;color:var(--ink);overflow-wrap:anywhere}
+.path{font-family:var(--font-mono);font-size:12px;color:var(--muted);background:none;padding:0;overflow-wrap:anywhere}
+pre{margin:0 0 16px;background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:14px 16px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.55;color:var(--ink)}
+pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal}
+strong{font-weight:600}
+hr{border:0;border-top:1px solid var(--rule);margin:28px 0}
+
+/* facts strip */
+.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:0;border:1px solid var(--rule);border-radius:4px;background:var(--surface);margin:18px 0 8px}
+.facts div{padding:10px 14px;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.facts dt{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.facts dd{margin:0;font-size:13.5px;line-height:1.4}
+
+/* tables */
+.tbl{overflow-x:auto;margin:0 0 18px;border:1px solid var(--rule);border-radius:4px;background:var(--surface)}
+.tbl table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.45}
+.tbl th{font-family:var(--font-mono);font-weight:500;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule-strong);background:var(--surface-2);white-space:nowrap;vertical-align:bottom}
+.tbl td{padding:8px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td code{font-size:12px}
+.tbl td.nw,.tbl th.nw{white-space:nowrap}
+.tbl td .path{font-size:11.5px}
+.tbl.compact td{padding:6px 10px}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+
+/* notes */
+.note{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:12px 16px 4px;margin:0 0 18px}
+.note > .label{display:block;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.note.warn{background:var(--warn-wash);border-color:transparent}
+.note.warn > .label{color:var(--warn)}
+.note.crit{background:var(--crit-wash);border-color:transparent}
+.note.crit > .label{color:var(--crit)}
+.note.info{background:var(--info-wash);border-color:transparent}
+.note.info > .label{color:var(--accent-ink)}
+.note p{max-width:none}
+
+/* pills */
+.pill{display:inline-block;font-family:var(--font-mono);font-size:10.5px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;line-height:1;padding:4px 6px 3px;border-radius:3px;vertical-align:.12em;white-space:nowrap}
+.pill.high{background:var(--crit-wash);color:var(--crit)}
+.pill.med{background:var(--warn-wash);color:var(--warn)}
+.pill.low{background:var(--surface-3);color:var(--ink-2)}
+.pill.get,.pill.post,.pill.put,.pill.patch,.pill.del{background:var(--surface-3);color:var(--ink-2);min-width:44px;text-align:center}
+.pill.post{background:var(--accent-wash);color:var(--accent-ink)}
+.pill.put,.pill.patch{background:var(--warn-wash);color:var(--warn)}
+.pill.del{background:var(--crit-wash);color:var(--crit)}
+
+/* equations */
+.eq{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:14px 18px;margin:0 0 18px;overflow-x:auto}
+.eq .f{font-size:17px;font-family:"IBM Plex Sans",Georgia,serif;letter-spacing:.01em;margin:2px 0 12px;white-space:nowrap}
+.eq .f var{font-style:italic}
+.eq dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:0;font-size:13.5px}
+.eq dl dt{font-style:italic;white-space:nowrap}
+.eq dl dd{margin:0;color:var(--ink-2)}
+.eq .where{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+.eq .src{font-size:12px;color:var(--muted);margin:10px 0 0}
+
+/* figures */
+figure.diagram{margin:6px 0 22px}
+figure.diagram .canvas{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:14px;overflow-x:auto}
+figure.diagram svg{display:block;width:100%;height:auto;min-width:640px;color:var(--ink)}
+figure.diagram figcaption{font-size:12.5px;color:var(--muted);margin-top:8px;max-width:80ch}
+pre.mermaid{background:var(--surface);font-family:var(--font-body);font-size:13px;text-align:center;line-height:1.3;color:var(--ink)}
+.svg-box{fill:var(--surface);stroke:var(--rule-strong)}
+.svg-box-accent{fill:var(--accent-wash);stroke:var(--accent)}
+.svg-band{fill:var(--surface-2);stroke:var(--rule)}
+.svg-t{fill:var(--ink);font-family:var(--font-body);font-size:13px}
+.svg-tb{fill:var(--ink);font-family:var(--font-display);font-weight:600;font-size:14.5px}
+.svg-ts{fill:var(--muted);font-family:var(--font-body);font-size:11.5px}
+.svg-tm{fill:var(--muted);font-family:var(--font-mono);font-size:11px}
+.svg-ta{fill:var(--accent-ink);font-family:var(--font-mono);font-size:11px}
+.svg-line{stroke:var(--ink-2);stroke-width:1.3;fill:none}
+.svg-line-accent{stroke:var(--accent);stroke-width:1.6;fill:none}
+.svg-dash{stroke:var(--muted);stroke-width:1.3;fill:none;stroke-dasharray:5 4}
+.svg-chip{fill:var(--accent-wash);stroke:none}
+
+/* grid of cards (used sparingly) */
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:0 0 18px}
+.cols > div{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:14px 16px}
+.cols h4{margin-top:0}
+.cols p{font-size:14px}
+
+/* steps */
+ol.steps{counter-reset:s;list-style:none;padding-left:0}
+ol.steps > li{counter-increment:s;position:relative;padding-left:34px;margin-bottom:10px}
+ol.steps > li::before{content:counter(s);position:absolute;left:0;top:1px;width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink-2);font-family:var(--font-mono);font-size:11.5px;display:flex;align-items:center;justify-content:center}
+
+/* issue list */
+.issue{border-top:1px solid var(--rule);padding-block:14px 6px}
+.issue:first-of-type{border-top:0}
+.issue h4{margin:0 0 6px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.issue p{margin-bottom:8px}
+
+/* back-to-top */
+.totop{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);text-decoration:none;display:inline-block;margin-top:14px}
+.totop:hover{color:var(--accent)}
+details.more{margin:0 0 16px;border:1px solid var(--rule);border-radius:4px;background:var(--surface)}
+details.more > summary{cursor:pointer;padding:9px 14px;font-weight:500;font-size:14px}
+details.more > div{padding:4px 16px 8px;border-top:1px solid var(--rule)}
+@media (max-width: 560px){
+  body{font-size:14.5px}
+  .masthead-inner,.layout{padding-inline:16px}
+  .eq .f{font-size:15px}
+}
+</style>
+
+<header class="masthead" id="top">
+  <div class="masthead-inner">
+    <div>
+      <p class="kicker">PrecisePK · engineering reference</p>
+      <h1>PreciseRx Codebase Atlas</h1>
+      <p class="lede">Every repository behind PrecisePK, from the browser to the C++ dosing engine: what each part does, how requests move between them, how to run and test them, and what to watch out for. Code locations are given as <code>file:line</code> in each repository.</p>
+      <ul class="meta">
+        <li><b>10</b> repositories</li>
+        <li><b>~2,900</b> tracked files</li>
+        <li><b>28</b> drugs in the engine</li>
+        <li><b>6</b> Cognito user pools</li>
+      </ul>
+      <p style="margin:14px 0 0"><button class="menu-btn" id="menu-btn" type="button" aria-controls="toc" aria-expanded="false">Contents</button></p>
+    </div>
+    <figure class="curve">
+      <svg viewBox="0 0 620 162" role="img" aria-label="Simulated vancomycin concentration over 72 hours for 1 gram every 12 hours: peaks near 53 mg/L, troughs settling near 7.5 mg/L, with one 24-hour steady-state window shaded, AUC about 404 mg·h/L.">
+        <g class="svg-tm" text-anchor="end">
+          <text x="36" y="138">0</text><text x="36" y="98">20</text><text x="36" y="58">40</text><text x="36" y="18">60</text>
+        </g>
+        <g stroke="currentColor" stroke-opacity=".22" stroke-width="1">
+          <line x1="44" y1="94" x2="604" y2="94"/><line x1="44" y1="54" x2="604" y2="54"/><line x1="44" y1="14" x2="604" y2="14"/>
+        </g>
+        <line x1="44" y1="134" x2="604" y2="134" stroke="currentColor" stroke-opacity=".6"/>
+        <polygon points="{{AREA}}" fill="var(--accent-band)" stroke="none"/>
+        <polyline points="{{POLY}}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+        <g fill="currentColor" fill-opacity=".7">
+          <polygon points="44,141 40,148 48,148"/><polygon points="137.3,141 133.3,148 141.3,148"/><polygon points="230.7,141 226.7,148 234.7,148"/><polygon points="324,141 320,148 328,148"/><polygon points="417.3,141 413.3,148 421.3,148"/><polygon points="510.7,141 506.7,148 514.7,148"/>
+        </g>
+        <g class="svg-tm" text-anchor="middle">
+          <text x="44" y="160">0 h</text><text x="137.3" y="160">12</text><text x="230.7" y="160">24</text><text x="324" y="160">36</text><text x="417.3" y="160">48</text><text x="510.7" y="160">60</text><text x="604" y="160">72</text>
+        </g>
+        <text class="svg-tm" x="50" y="11">mg/L</text>
+        <text class="svg-ta" x="466" y="78" text-anchor="middle">AUC₂₄ ≈ 404 mg·h/L</text>
+        <text class="svg-tm" x="600" y="114" text-anchor="end">trough ≈ 7.5</text>
+      </svg>
+      <figcaption>Vancomycin 1 g every 12 h (triangles; 1 h infusions) under the Rodvold 1988 population prior for a 70 kg adult with CrCl 100 mL/min: CL 4.95 L/h, Vdβ 49 L.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" id="toc" aria-label="Contents">
+    <div class="toc-filter">
+      <label for="toc-filter-input">Find a section</label>
+      <input id="toc-filter-input" type="search" placeholder="e.g. fit, Epic, audit" autocomplete="off">
+    </div>
+    <div id="toc-list"></div>
+  </nav>
+  <main id="content">

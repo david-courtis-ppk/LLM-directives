@@ -1,0 +1,131 @@
+
+<section class="doc" id="x-auth" data-group="Across the system" data-title="Sign-in and sessions">
+  <header>
+    <p class="eyebrow"><span>All services</span><span>Cognito · cookies · Valkey</span></p>
+    <h2>Sign-in, sessions and roles</h2>
+    <p class="summary">Every service authenticates the same way. The browser holds Cognito tokens in cookies. Each service verifies both tokens itself on every request, checks that the two tokens belong to one user, checks a shared revocation flag, then reads roles from the id token. No service trusts another service's check.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Piece</th><th>How it works</th></tr></thead>
+    <tbody>
+      <tr><td>Cookies</td><td><code>access_token</code>, <code>id_token</code> and <code>refresh_token</code> are HttpOnly, Secure and SameSite=Strict, scoped to <code>PPK_PARENT_DOMAIN</code>. Main sets them on sign-in; Databridge sets them after an EHR launch. There is no CSRF token; the design relies on SameSite=Strict.</td></tr>
+      <tr><td>User pools</td><td>Six: Email (the main PrecisePK pool), SSO, Epic, Oracle Health, Sentri7 V1 and Sentri7 V2. The pool is chosen by the token's issuer. GenAI <code>main</code> checks five.</td></tr>
+      <tr><td>Verification</td><td>Node services use Shared-JS <code>createCognitoAuth</code> (aws-jwt-verify). Database uses python-jose with a JWKS cache and also checks the app client. GenAI has its own weaker check.</td></tr>
+      <tr><td>Token pairing</td><td>The access and id tokens must share <code>sub</code> and <code>iss</code>, and in Database also the app client (RX-3606, September 2026). Without this, one user's access token could carry another user's id token, and roles are read from the id token.</td></tr>
+      <tr><td>Roles</td><td>The id token's <code>cognito:roles</code> claim holds IAM role ARNs. Each service compares them with <code>PPK_ADMIN_ROLE</code>, <code>PPK_USER_ROLE</code> and <code>PPK_IAM_ROLE</code>. The analytics and multi-site admin roles are required at boot but not enforced anywhere. <code>cognito:groups</code> is never read.</td></tr>
+      <tr><td>Refresh</td><td>The frontend calls <code>POST /main/v1/auth/tokens</code>. Main returns 204 while both tokens have more than 5 minutes left, and otherwise refreshes whichever expires first (RX-3625).</td></tr>
+      <tr><td>Frontend gate</td><td><code>withRole</code> redirects to <code>/403</code> only if the privilege check rejects. The request wrapper resolves <code>null</code> on a 403, so the redirect never happens for HTTP errors, and the page shell renders. The backend is the only real gate. (<span class="path">PreciseRx-Web/src/hooks/withRole.tsx:19-44</span>; <span class="path">AxiosErrorHandlers.ts:75-77</span>)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="x-revocation">Revocation</h3>
+  <figure class="diagram">
+    <div class="canvas">
+      <svg viewBox="0 0 900 270" role="img" aria-label="When an IAM admin disables a user, Main disables the Cognito account and signs it out, then writes a revocation flag with a one-hour lifetime to Valkey. On the user's next request, any service checks that flag, cached for 30 seconds, and returns 401 if it is set.">
+        <defs><marker id="ah-rev" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+        <rect class="svg-box" x="20" y="24" width="180" height="50" rx="4"/>
+        <text class="svg-tb" x="34" y="46">IAM admin</text><text class="svg-ts" x="34" y="63">disables or deletes a user</text>
+        <line class="svg-line" x1="200" y1="49" x2="256" y2="49" marker-end="url(#ah-rev)"/>
+        <rect class="svg-box-accent" x="258" y="24" width="180" height="50" rx="4"/>
+        <text class="svg-tb" x="272" y="46">Main</text><text class="svg-ts" x="272" y="63">/iam/user/disable or DELETE</text>
+        <line class="svg-line" x1="438" y1="49" x2="556" y2="49" marker-end="url(#ah-rev)"/>
+        <text class="svg-tm" x="497" y="41" text-anchor="middle">1 · sign out + disable</text>
+        <rect class="svg-box" x="558" y="24" width="180" height="50" rx="4"/>
+        <text class="svg-tb" x="572" y="46">Cognito</text><text class="svg-ts" x="572" y="63">refresh stops working</text>
+        <polyline class="svg-line" points="348,74 348,150 556,150" marker-end="url(#ah-rev)"/>
+        <text class="svg-tm" x="356" y="140">2 · SET revoked:user:&lt;sub&gt;, TTL 3600 s</text>
+        <rect class="svg-box" x="558" y="126" width="180" height="50" rx="4"/>
+        <text class="svg-tb" x="572" y="148">Valkey</text><text class="svg-ts" x="572" y="165">flag outlives any access token</text>
+        <rect class="svg-box" x="700" y="206" width="180" height="50" rx="4"/>
+        <text class="svg-tb" x="714" y="228">Any service</text><text class="svg-ts" x="714" y="245">next request, token still valid</text>
+        <polyline class="svg-line" points="790,206 790,151 740,151" marker-end="url(#ah-rev)"/>
+        <text class="svg-tm" x="798" y="190">3 · EXISTS, cached 30 s</text>
+        <line class="svg-dash" x1="700" y1="231" x2="470" y2="231" marker-end="url(#ah-rev)"/>
+        <text class="svg-tm" x="585" y="223" text-anchor="middle">4 · 401 "session revoked"</text>
+        <text class="svg-ts" x="20" y="226">Checked only for Email and SSO pool tokens.</text>
+        <text class="svg-ts" x="20" y="244">If Valkey errors at runtime, the request is allowed (fail open).</text>
+        <text class="svg-ts" x="20" y="262">At boot, a service that can't reach Valkey exits (fail closed).</text>
+      </svg>
+    </div>
+    <figcaption>A disabled user's existing access token stays cryptographically valid for up to an hour. The revocation flag closes that window everywhere, within the 30-second per-process cache.</figcaption>
+  </figure>
+
+  <h3 id="x-tenancy">Tenancy: institutions and sites</h3>
+  <ul>
+    <li><strong>Institution.</strong> The id token's <code>custom:license_name</code> leads to the license, then to the institution ID, and that ID is the MySQL schema name. One MySQL credential can reach every schema, so isolation between institutions is enforced only in application code. It holds only if users cannot edit their own <code>custom:license_name</code>, which is a Cognito app-client setting that isn't in these repos.</li>
+    <li><strong>Site.</strong> Multi-site institutions divide users and cases by site through Cognito groups of type <code>site</code>. Database does not restrict reads by site: site filters come from the caller, and cases load by number alone. Main's IAM routes check that the target user shares the caller's license.</li>
+    <li><strong>Analytics sockets.</strong> Rooms are named by the client, and finished jobs are currently broadcast across all institutions (<a href="#analytics">Analytics</a>).</li>
+  </ul>
+</section>
+
+<section class="doc" id="x-audit" data-group="Across the system" data-title="Logging and audit">
+  <header>
+    <p class="eyebrow"><span>All services</span><span>HIPAA · SOC 2</span></p>
+    <h2>Logging and audit</h2>
+    <p class="summary">The organization's baseline requires every privileged action to be audit-logged. Today, only Database writes an audit trail, and only for a subset of case actions. Everything else leaves at most one access-log line.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Action</th><th>Audit record</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Load, create, update, autosave, archive or delete a case</td><td>Yes: an <code>edithistory_web</code> row. The delete row can fail silently.</td><td>Database</td></tr>
+      <tr><td>Unarchive, move a case to another site, notes, settings, protocol settings</td><td>No</td><td>Database</td></tr>
+      <tr><td>Bulk reads (<code>/cases</code>, <code>/patients</code>, therapeutic export)</td><td>No; only the gunicorn access log</td><td>Database</td></tr>
+      <tr><td>Invite, disable, enable, delete, or change a user's groups</td><td>No; the access log records the actor but not the target</td><td>Main</td></tr>
+      <tr><td>Create an EHR user, reset their password, create a group or facility</td><td>No</td><td>Databridge</td></tr>
+      <tr><td>LLM prompts and generated SQL</td><td>No</td><td>GenAI</td></tr>
+    </tbody>
+  </table></div>
+  <h4>Where PHI or secrets can reach logs</h4>
+  <ul>
+    <li>Access logs record full URLs, including query strings. That covers patient search terms in Database, case numbers in Analytics, and OAuth codes and the Epic launch token in Databridge.</li>
+    <li>In Main, Joi validation messages can include the rejected value next to the username and license.</li>
+    <li>PK-Library writes exception text to stderr, outside the structured logger.</li>
+    <li>The Analytics worker logs case numbers, serum IDs and predicted concentrations.</li>
+    <li>Main's <code>/logs/errors</code> and <code>/logs/forms</code> forward arbitrary client objects and the user's email to a Datadog workflow, with no rate limit.</li>
+    <li>Database logs the whole JWT when it sees an unknown issuer.</li>
+  </ul>
+</section>
+
+<section class="doc" id="x-deploy" data-group="Across the system" data-title="Build, deploy and CI">
+  <header>
+    <p class="eyebrow"><span>All repos</span><span>GitHub Actions · Jenkins · Amplify</span></p>
+    <h2>Build, deploy and CI</h2>
+    <p class="summary">GitHub Actions runs unit tests on pull requests. Jenkins, triggered by hand on arm64 agents, builds backend images and pushes them to Docker Hub, tagged with the last segment of the branch name. The step that deploys those images to ECS is defined outside every repo covered here.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Repo</th><th>Pull request CI</th><th>Artifact</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>PreciseRx-Web</td><td>build and test workflow</td><td>AWS Amplify build (<code>amplify.yml</code>)</td><td>Follows a blue-green lane through its API paths (RX-3666). See <a href="#fe-platform">Frontend platform</a>.</td></tr>
+      <tr><td>Main, Analytics, Databridge</td><td><code>pnpm install --frozen-lockfile &amp;&amp; pnpm test</code>, Node 24, no lint</td><td>Docker Hub images for production and staging (Analytics also builds a worker image)</td><td>Jenkins uses one engineer's personal token and runs no tests. Main's production Dockerfile lacks the token mount.</td></tr>
+      <tr><td>Database</td><td>pytest against MySQL 8</td><td>Docker Hub images</td><td>Three near-identical Dockerfiles.</td></tr>
+      <tr><td>GenAI</td><td>none on <code>main</code>; pytest on <code>feature/rx-2901</code></td><td>Docker Hub image (feature branch only)</td><td>The image runs as root.</td></tr>
+      <tr><td>PK-Library</td><td>C++, Python and Node jobs; CodeQL</td><td>npm package with 6 prebuilt binaries, published on any version change</td><td>Stable versions only from <code>stable/vX.Y.Z</code> branches.</td></tr>
+      <tr><td>Shared-JS</td><td>lint, build, test</td><td>npm package on GitHub Packages</td><td>Published from <code>stable/v*</code> branches.</td></tr>
+      <tr><td>Shared-Python</td><td>none</td><td>installed from a git ref</td><td>Only tag: <code>v1.0.0</code>.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Production network path, from code comments in Main, Analytics and Database: WAF → API Gateway (regional REST) → VPC Link → internal ALB → ECS. Service-to-service calls go through the internal ALB with an <code>x-api-version</code> header (RX-3236). Node serves plain HTTP on 8080, so whether the last hop uses TLS depends on the infrastructure, which isn't visible here.</p>
+  <p>Dependency hygiene is the same across the Node repos: pnpm 11 with a 72-hour minimum release age, integrity checks, an allowlist of packages that may run install scripts, and daily Dependabot updates.</p>
+</section>
+
+<section class="doc" id="x-testing" data-group="Across the system" data-title="Testing matrix">
+  <header>
+    <p class="eyebrow"><span>All repos</span><span>How to run each suite</span></p>
+    <h2>Testing matrix</h2>
+    <p class="summary">Counts are approximate. The largest gaps are in the code paths that carry the bugs listed on this site.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Repo</th><th>Framework</th><th>Run</th><th class="num">Files</th><th class="num">Cases</th><th>Main gaps</th></tr></thead>
+    <tbody>
+      <tr><td>PK-Library</td><td>GoogleTest, pytest, Jest</td><td><code>make build-test-cpp &amp;&amp; make test-cpp</code></td><td class="num">136</td><td class="num">1,323 (249 off)</td><td>An end-to-end fit with <code>prior_scale</code>; constraint enforcement</td></tr>
+      <tr><td>Main</td><td>Jest + supertest</td><td><code>pnpm test</code> on the host</td><td class="num">30</td><td class="num">~167</td><td>Real drugs other than amikacin; PK values beyond HTTP 200</td></tr>
+      <tr><td>Database</td><td>pytest</td><td><code>make test</code> (drops local DBs)</td><td class="num">39</td><td class="num">~310</td><td>Audit middleware, deletes, notes, PUT save, EHR routes</td></tr>
+      <tr><td>Analytics</td><td>Jest</td><td><code>pnpm test</code></td><td class="num">15</td><td class="num">~106</td><td>Socket listeners, completion handlers, worker, Redis helpers</td></tr>
+      <tr><td>Databridge</td><td>Jest</td><td><code>pnpm test</code></td><td class="num">11</td><td class="num">~125</td><td>Epic and Oracle Health controllers, crypto, API key</td></tr>
+      <tr><td>GenAI (<code>main</code>)</td><td>pytest</td><td><code>poetry run pytest</code> with env exported</td><td class="num">4</td><td class="num">25</td><td>Agents, SQL tool, token verification</td></tr>
+      <tr><td>Shared-JS</td><td>Jest + ts-jest</td><td><code>pnpm test</code></td><td class="num">13</td><td class="num">n/a</td><td>AWS wrappers and factories</td></tr>
+      <tr><td>Shared-Python</td><td>none</td><td></td><td class="num">0</td><td class="num">0</td><td>Everything</td></tr>
+      <tr><td>PreciseRx-Web</td><td>Vitest + Testing Library</td><td><code>pnpm test</code></td><td class="num">126</td><td class="num">see <a href="#fe-tests">Frontend tests</a></td><td>Model Analytics socket flow, admin protocol manager</td></tr>
+    </tbody>
+  </table></div>
+</section>

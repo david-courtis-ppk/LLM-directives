@@ -1,0 +1,150 @@
+
+<section class="doc" id="fe-clinical" data-group="Frontend (PreciseRx-Web)" data-title="Clinical workflow">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>src/components/User/</span><span>274 files</span></p>
+    <h2>The clinical workflow</h2>
+    <p class="summary">The pharmacist's path through the app: find or create a patient, enter demographics and labs, choose drug, route and model, enter doses and levels, look at the fitted curve, get a recommended regimen, and save. Each step writes to Redux, and most steps call Main to recalculate.</p>
+  </header>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Folder</th><th>What the pharmacist sees</th></tr></thead>
+    <tbody>
+      <tr><td class="path">PatientHome/</td><td>Therapeutic Status doughnut (Chart.js), recently active cases, patient search, case list, archive, delete and change-site dialogs.</td></tr>
+      <tr><td class="path">PatientInformation/</td><td>Patient card (name, birthday, ID, sex, weight, height, site); Drug card (drug, route, drug factors, amputations, covariates); Lab Results (SCr or measured CrCl, history dialogs, AKI badge); Models; the PK parameter table; renal and body-composition results.</td></tr>
+      <tr><td class="path">DrugMonitoring/</td><td>Therapeutic Target, the concentration graph, dose, level and dialysis histories, and the RX-3699 model fit demo.</td></tr>
+      <tr><td class="path">SteadyStateAnalysis/</td><td>Dosage regimen prediction (standard or nomogram) and serum concentration forecast.</td></tr>
+      <tr><td class="path">Notes/, Alerts/, Save/</td><td>Navigation-bar popovers: notes with tags; backend warnings grouped by page; the save icon and its status.</td></tr>
+      <tr><td class="path">PatientReport/, UserSidebar/</td><td>Report preview, printing and text export (with a special layout for one children's hospital); the sidebar with patient summary and PK.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-journey">Step by step, with the calls each step makes</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Step</th><th>What triggers it</th><th>Calls</th></tr></thead>
+    <tbody>
+      <tr><td>Open the app</td><td><code>UserHome</code> mounts</td><td>Database <code>/updates</code>, <code>/get_settings</code> and <code>/protocol-settings</code></td></tr>
+      <tr><td>Find a patient</td><td>Search box, recent cases, case list</td><td>Database <code>/patients</code> (search terms in the query string), <code>/cases/recent</code>, <code>/cases/search</code></td></tr>
+      <tr><td>Load a case</td><td>Pick a case from the list</td><td>Database <code>/cases/load_case</code>, then Main <code>/search/case</code>, <code>/search/case/models</code> and <code>/search/case/pharmacokinetics</code></td></tr>
+      <tr><td>Demographics</td><td>Birthday typed; weight or height changed (waits 1 s)</td><td>Main <code>/pharmacokinetics/age</code>, <code>/body-composition</code>, <code>/renal-parameters</code></td></tr>
+      <tr><td>Labs and AKI</td><td>SCr or CrCl history saved; any lab change (waits 300 ms)</td><td>Main <code>/pharmacokinetics/{free-fraction, crcl, gfr}</code>; Database <code>/patient/aki_status_at_datetime</code>; Main <code>/aki/assessment</code> three times (KDIGO, RIFLE, AKIN)</td></tr>
+      <tr><td>Drug and route</td><td>Drug picked. This clears <strong>all dose, level and dialysis history</strong>, with no confirmation.</td><td>Main <code>/drug</code>, <code>/drug/monitoring/settings</code>, <code>/drug/factors/warnings</code></td></tr>
+      <tr><td>Model</td><td>Models card mounts</td><td>Main <code>/pharmacokinetics/default-model</code> and <code>/patient-models</code>; Database <code>/get_prior_models</code> and <code>/population/local_models</code></td></tr>
+      <tr><td>Prior and posterior PK</td><td>Any renal, model or covariate change (waits 300 ms)</td><td>Main <code>/pharmacokinetics/bayesian-prior</code> (General), <code>/local-population</code> (Local), or Database <code>/bayes</code> (a previous individual). Then Main <code>/bayesian-post</code> when there are levels.</td></tr>
+      <tr><td>Doses and levels</td><td>Row edits. Only rows marked complete count. Intervals are stored in hours.</td><td>none directly; they trigger the graph</td></tr>
+      <tr><td>Drug Monitoring graph</td><td>Complete history changed (waits 3 s)</td><td>Main <code>/drug/monitoring/ranges</code> (after 500 ms), then <code>/drug/monitoring/fit-and-plot</code>, which cancels an older in-flight fit</td></tr>
+      <tr><td>Therapeutic target</td><td>Card mounts; target inputs change (300 ms); user edits the regimen</td><td>Main <code>/drug/therapeutic-target/options</code>, <code>/recommendation</code>, <code>/recalculate</code></td></tr>
+      <tr><td>Steady state</td><td>Page mounts, or "Steady State Recommendation" is clicked</td><td>Main <code>/prediction/dose/inputs</code>, <code>/prediction/serum/inputs</code>, then <code>/prediction/dose/nomogram</code> or <code>/output</code>, and <code>/prediction/serum/output</code></td></tr>
+      <tr><td>Notes</td><td>Add, edit, delete</td><td>Database <code>/notes</code> PUT, POST, DELETE</td></tr>
+      <tr><td>Save</td><td>Save icon, or autosave after 5 s of no changes</td><td>Database <code>/patients/cases/save</code> (PUT or PATCH), then Analytics <code>/therapeutic-status/assessment</code> when the change affects it</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-graph">The Drug Monitoring graph</h3>
+  <p>The concentration graph is drawn with <strong>D3 v7</strong>, not Chart.js (<span class="path">DrugMonitoring/SerumLevelGraph/SerumLevelGraph.tsx</span>, 2,637 lines). The <code>fit-and-plot</code> response is mapped like this (<span class="path">src/actions/GraphingActions.ts:210-291</span>):</p>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Response field</th><th>Where it goes</th></tr></thead>
+    <tbody>
+      <tr><td><code>graphic_analysis.bayes_prior_graph</code>, <code>fitted_graph</code></td><td><code>graphing.bayes_prior_graph</code> and <code>graphing.bayes_post_graph</code>: <code>y</code>, critical points, individual doses.</td></tr>
+      <tr><td><code>graphic_analysis.shared</code></td><td><code>graphing.shared</code>: sample step <code>dt</code>, axis, hours graphed, graph points and serum levels. Times are converted from UTC to local.</td></tr>
+      <tr><td><code>bayes_prior_params</code>, <code>fitted_params</code></td><td>PK parameters. The individual fit is cleared if too few levels are in use.</td></tr>
+      <tr><td><code>covariance</code></td><td><code>graphing.covariance</code>, which is sent back with Therapeutic Target requests. Its prior half is all zeros (<a href="#pk-fit-optimizer">engine issue</a>).</td></tr>
+      <tr><td><code>fitting_session</code></td><td><code>graphing.fitting_diagnostics</code>, which the model fit demo reads.</td></tr>
+      <tr><td><code>cl_rrt_history</code>, <code>warnings</code></td><td>Dialysis clearance history; Drug Monitoring alerts.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The graph draws both curves plus an overview strip for zooming, measured levels as squares, critical points as diamonds, the therapeutic band and toxic lines, AUC shading, crosshairs, and a linear or log axis. The on-screen AUC is computed in the browser as <code>sum(y) × dt × auc_conversion</code>.</p>
+  <p><strong>Fitting settings dialog</strong> (the gear icon):</p>
+  <ul>
+    <li>Standard error 0.01–0.2, fixed error 0–100, and time weight 1.005–1.01.</li>
+    <li>Objective function: Sheiner 1972 or least squares.</li>
+    <li>A peak-time override for IV routes.</li>
+  </ul>
+  <p>Saving runs <code>fit-and-plot</code> straight away.</p>
+
+  <h3 id="fe-model-fit-demo">RX-3699: the model fit demo</h3>
+  <p>Work in progress on branch <code>rx-3699-model-fit-demo</code>, not yet merged: 5 new files in <span class="path">DrugMonitoring/ModelFitDemo/</span>, 2 test files with 13 cases, the <code>model_fit_demo</code> namespace, and a card rendered below Dialysis History. The card appears when Vite runs in dev mode or <code>VITE_ENABLE_MODEL_FIT_DEMO=true</code>. It has no role or license check.</p>
+  <ul>
+    <li><strong>Rating.</strong> The card rates the fit already on screen as Good, Check or Poor, without making any new calls. It reads the engine's final residuals (<code>fitting_session.iterations[].loss_j</code>) and <code>partialDerivative</code>.</li>
+    <li><strong>What-ifs.</strong> Controls for a level's value (× 0.3 to 3) and draw time (±180 min), the clearance prior SD (5–100%), the prior shape (model, normal, log-normal), and measurement error × 1–3.</li>
+    <li><strong>What-if requests.</strong> Each what-if sends its own <code>fit-and-plot</code> request, one at a time, without touching the case, so it can't trigger autosave. The prior-shape control sets <code>fitting_settings.prior_scale</code>. That only has an effect against a local PK-Library build (see <a href="#pk-prior-scale">the engine side</a>).</li>
+  </ul>
+  <div class="eq">
+    <p class="f"><var>J</var> = <var>J</var><sub>y</sub> + <var>J</var><sub>θ</sub>,   <var>J</var><sub>y</sub> = Σ<sub><var>i</var></sub> <var>ε</var><sub><var>i</var></sub>²,   <var>J</var><sub>θ</sub> = Σ<sub><var>j</var></sub> <var>z</var><sub><var>j</var></sub>²,   <var>p</var> = Pr(χ²<sub><var>N</var></sub> ≥ <var>J</var>)</p>
+    <p class="where">where</p>
+    <dl>
+      <dt>ε<sub>i</sub></dt><dd>the engine's weighted residual for level <var>i</var>, (ŷ<sub>i</sub> − y<sub>i</sub>) / s<sub>i</sub>, as defined in <a href="#pk-fit-objective">How a fit works</a></dd>
+      <dt>z<sub>j</sub></dt><dd>the engine's prior penalty for parameter <var>j</var></dd>
+      <dt>J<sub>y</sub>, J<sub>θ</sub></dt><dd>the part of the objective from missing the levels, and the part from moving away from the prior</dd>
+      <dt>N</dt><dd>the number of levels that carry evidence (a zero-residual level at time 0 is excluded)</dd>
+      <dt>p</dt><dd>the probability of an objective at least this large if the model and error assumptions hold</dd>
+      <dt>A, B</dt><dd>the slopes of the level residuals and of the prior penalties with respect to the parameters, from <code>partialDerivative</code></dd>
+      <dt>C<sub>θ</sub></dt><dd>(BᵀB)⁻¹, the prior covariance of the parameters</dd>
+      <dt>κ<sub>i</sub></dt><dd>the eigenvalues of I + A C<sub>θ</sub> Aᵀ, where I is the identity. J<sub>y</sub> is tested as a chi-square weighted by 1/κ<sub>i</sub>, and J<sub>θ</sub> by 1 − 1/κ<sub>i</sub>. Each uses a Satterthwaite approximation, and the two tests split the false-alarm budget (Šidák correction).</dd>
+    </dl>
+    <p class="src"><span class="path">ModelFitDemo/fitMetrics.ts</span>, <span class="path">fitStatistics.ts</span></p>
+  </div>
+  <h5>Findings in the demo</h5>
+  <ul>
+    <li><strong>Good with neither check run.</strong> With two or more levels and no <code>partialDerivative</code> in the response, the residuals don't count as uninformative, yet both checks return <code>not_judged</code>. <code>RATING_FOR['pass']</code> then yields Good (<span class="path">fitMetrics.ts:234-260</span>).</li>
+    <li><strong>Silent failures.</strong> A what-if request that fails falls back to the base fit, with no message.</li>
+    <li><strong>Least-squares mode.</strong> The engine's SD is then 1% of the observed level, so the chi-square premise probably doesn't hold. The code doesn't treat this mode differently.</li>
+    <li><strong>Extra fit requests.</strong> The hook subscribes to the whole <code>graphing</code> slice, and the effect that starts fits depends on it. So while a what-if is active, zooming or selecting points on the graph starts another fit.</li>
+    <li><strong>Settings out of range.</strong> The measurement-error multiplier can push the standard error beyond the dialog's own maximum (0.2 × 3 = 0.6).</li>
+    <li><strong>Untested code.</strong> <code>useModelFitDemo</code> (request building and queueing) and the card have no tests.</li>
+  </ul>
+
+  <h3 id="fe-save">Save, autosave and load</h3>
+  <ul>
+    <li><strong>PUT or PATCH.</strong> A manual save, a new case, or a case not yet saved in UTC sends <strong>PUT</strong> with the whole case. Autosave on an existing UTC case sends <strong>PATCH</strong> with only what changed, compared against <code>last_saved_inputs</code> over 48 input paths and 4 history paths (<span class="path">src/utils/SaveUtility.ts:20-295</span>).</li>
+    <li><strong>What counts as saved.</strong> After a successful save, <code>last_saved_inputs</code> is set to the inputs <em>as they were when the save began</em>. Edits made during the save therefore still count as unsaved.</li>
+    <li><strong>Loading.</strong> Loading a case resets eight slices, loads the saved case, asks Main to rebuild everything that isn't stored, then picks the model and recomputes PK. Unsaved changes on the current case are discarded without asking.</li>
+    <li><strong>Duplicate patients.</strong> The client has no duplicate-patient check. Database merges patients with identical demographics on PUT.</li>
+  </ul>
+  <div class="note crit"><span class="label">A failed save is never detected</span><p><code>saveCase</code> sets the status to <code>SAVING</code> and only ever moves it to <code>CONFIRMATION</code> and <code>DONE</code> on success (<span class="path">src/actions/ApplicationActions.ts:254-285</span>). The only code that sets <code>FAILED</code> waits for an error on the route <code>database/${version}/save_patient_and_case_info</code> (<span class="path">src/components/User/Save/SaveContainer.tsx:177-181</span>). But <code>saveCase</code> sends to <code>/patients/cases/save</code>, so that check never matches. After one failed save the status stays at "saving". Manual save then returns early (<span class="path">SaveContainer.tsx:108-111</span>), and autosave skips while the status is "saving". Nothing tells the pharmacist that their work is no longer being saved.</p></div>
+  <div class="note warn"><span class="label">The first note on an unsaved case goes to case −1</span><p><code>handleAddNote</code> saves the case first when <code>caseNum === -1</code>, but then builds the note with the same <code>caseNum</code>, which is still −1 (<span class="path">src/components/User/Notes/Notes.tsx:175-189</span>).</p></div>
+
+  <h3 id="fe-units">Units and validation</h3>
+  <ul>
+    <li><strong>Weight and height units.</strong> The only options are <code>['kg','lb']</code> and <code>['cm','in']</code> (<span class="path">src/components/GlobalVariables.ts:164-172</span>), and these strings are sent as-is. That's the only thing keeping the engine's silent kg fallback from firing, because Main accepts any string. A constant <code>LBS = 'lbs'</code> sits right next to them and is used only in tooltip text. It must never be sent.</li>
+    <li><strong>Two conversion factors.</strong> kg ↔ lb uses 2.2046 when toggling units, but 0.4535924 in weight-based dosing.</li>
+    <li><strong>Units by value type.</strong> SCr values carry no unit; the global creatinine unit setting applies, and changing it converts every entry by 88.42. Dose, level and interval units come from drug metadata, and intervals are stored in hours.</li>
+    <li><strong>Case validity.</strong> A case is valid (<code>hasValidCase</code>) only with a valid birthday, PK parameters, CrCl above 0, a model, weight and height, drug information and fitting settings. Navigation, Save, Notes and autosave all depend on it.</li>
+    <li><strong>PK check too permissive.</strong> <code>validatePKParameters</code> returns <code>validOthers || validF</code>, so a valid F alone passes, although its comment says every entry must be valid.</li>
+  </ul>
+
+  <h3 id="fe-empty">When an engine call returns <code>{}</code></h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Call</th><th>What the UI does</th></tr></thead>
+    <tbody>
+      <tr><td><code>fit-and-plot</code></td><td>Stops the updating animation and keeps the <strong>old curves and old fitted parameters</strong> on screen, with no message. After an HTTP error, the updating spinner can stay on for good.</td></tr>
+      <tr><td><code>bayesian-prior</code></td><td>Keeps the old prior.</td></tr>
+      <tr><td><code>local-population</code>, <code>derived-parameters</code></td><td>The promise never resolves, so a spinner or follow-up call hangs.</td></tr>
+      <tr><td>Database <code>/bayes</code></td><td>Dispatches <code>{}</code> into the PK reducer, which destructures it., which likely breaks the PK state.</td></tr>
+      <tr><td><code>/drug/monitoring/ranges</code></td><td>The band and toxic lines disappear.</td></tr>
+      <tr><td><code>/drug/monitoring/settings</code></td><td>Fitting settings become <code>{}</code>, so the case becomes invalid, navigation is disabled and autosave pauses.</td></tr>
+      <tr><td><code>therapeutic-target/recommendation</code></td><td>Shows the error overlay. This is the one clean case.</td></tr>
+      <tr><td><code>/prediction/dose/output</code>, <code>/prediction/serum/output</code>, <code>/crcl</code>, <code>/renal-parameters</code></td><td>The handler throws while reading a missing field.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-report">Reports, tours, formulas</h3>
+  <ul>
+    <li><strong>Reports.</strong> "Export Patient Report" re-runs <code>fit-and-plot</code> if needed, renders the D3 graph, converts it to a PNG with Canvg, and prints with <code>react-to-print</code>. Both the PDF title and the text export are named <code>${first_name}_${last_name}_Report</code>, so the file name carries PHI.</li>
+    <li><strong>Tours.</strong> <code>react-joyride</code> runs on Patient Home and Drug Monitoring. The automatic first-time tour is commented out.</li>
+    <li><strong>Formulas.</strong> <span class="path">Shared/Citation.tsx</span> renders PK-Library's citation objects (equation, variables, factors, sources) with KaTeX. Citations appear on PK parameters (with a Sanford Guide link), CrCl, GFR, body composition and SCr entries.</li>
+  </ul>
+
+  <h3 id="fe-clinical-bugs">Other bugs in this area</h3>
+  <ul>
+    <li><strong>Dose rounding.</strong> If the backend omits <code>dosage_increment</code>, doses round to steps of 5 drug units with only a console message (<span class="path">TherapeuticTargetLibrary.tsx:783-808</span>).</li>
+    <li><strong>Graph SVG and DOM.</strong>
+      <ul>
+        <li><code>SerumLevelGraph.tsx:1619</code> writes <code>'url(#graph_clip'</code> without the closing parenthesis, so individual AUC shading isn't clipped.</li>
+        <li>Each redraw adds a tooltip <code>div</code> to <code>&lt;body&gt;</code> that is never removed.</li>
+        <li>Page-wide D3 selectors can interfere with the report graph when both are mounted.</li>
+      </ul>
+    </li>
+    <li><strong>Action creators called without <code>dispatch</code>.</strong> The route fix-up in <code>DosageEntry.tsx:249</code> and <code>getDrugs()</code> in <code>Patient.tsx</code> therefore do nothing.</li>
+    <li><strong>Spinners that don't wait.</strong> <code>getBodyComp</code> and <code>getRenalParameters</code> don't return their promise, so their spinners stop after 300 ms whether or not the call finished.</li>
+    <li><strong>Blank tooltip.</strong> <code>RangedInput.tsx:82</code> passes <code>src</code> to <code>Latex</code>, whose prop is <code>source</code>, so the parameter name in that tooltip is blank.</li>
+  </ul>
+</section>

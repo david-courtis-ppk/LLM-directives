@@ -1,0 +1,55 @@
+
+<section class="doc" id="genai" data-group="Backend services" data-title="GenAI">
+  <header>
+    <p class="eyebrow"><span>src/apis/PreciseRx-GenAI</span><span>Python</span><span>FastAPI</span><span>/gen-ai/v1</span></p>
+    <h2>PreciseRx-GenAI</h2>
+    <p class="summary">The LLM service. What the umbrella runs, <code>main</code>, is an early proof of concept whose endpoints all sit under <code>/test</code>. The real development happens on <code>feature/rx-2901</code>, which is 1,043 commits ahead of <code>main</code> and 1 behind.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Framework</dt><dd>FastAPI 0.115, Uvicorn, pydantic-ai 0.1</dd></div>
+    <div><dt>Model provider</dt><dd>OpenAI, called directly with an API key</dd></div>
+    <div><dt>Packaging</dt><dd>Poetry; Python 3.12+ (image 3.13-alpine)</dd></div>
+    <div><dt>Local</dt><dd>Gen-AI-Server :8004, gen-ai profile only, runs as root</dd></div>
+    <div><dt>Tests</dt><dd>4 pytest files, 25 tests</dd></div>
+  </dl>
+
+  <h3 id="genai-main">On <code>main</code></h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/health-check</code></td><td>Returns <code>{"status":"ok"}</code>. No auth.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/test/chat-agent</code></td><td>Sends the user's text to <code>gpt-4o-mini</code> with a one-line system prompt.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/test/sql-agent</code></td><td>Natural language to SQL. <code>gpt-4.1-mini</code> writes SQL against a prompt containing the <code>patients</code> and <code>cases</code> DDL. The service runs the SQL on the MySQL reader and sends the rows back to the model.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/test/db</code>, <code>/test/validation</code></td><td>A fixed vancomycin case count, and an echo.</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Auth.</strong> Cookie tokens are checked against five Cognito pools, followed by the revocation check (RX-3302), which fails open at runtime. <code>main</code> doesn't check the audience, <code>token_use</code>, the id token's expiry, token pairing or roles.</li>
+    <li><strong>Data scope.</strong> The database schema is hard-coded to one institution, whatever the caller's license is (<span class="path">services/db.py:13</span>). Query rows, which can include names, birthdays and MRNs, go to OpenAI. No code shows whether a BAA or zero-retention agreement covers this.</li>
+    <li><strong>SQL safety.</strong> Read-only behaviour depends only on connecting to the reader endpoint. There is no statement allowlist, <code>LIMIT</code> or timeout, and the MySQL connection sets no TLS options.</li>
+  </ul>
+  <div class="note warn"><span class="label">Shared list across requests</span><p><code>correct_sql_query</code> declares <code>failed_queries: List[FailedQueryRun] = []</code> as a default argument (<span class="path">agents/sql.py:200</span>). Python creates that list once per process, so failed SQL and its error text from earlier requests, possibly other users', accumulate and are returned in later responses. The retry at line 244 is also missing <code>await</code> and passes its arguments in shifted positions, so a second failure becomes a TypeError. The risk is low if <code>main</code> is never deployed; only <code>feature/rx-2901</code> has a Jenkinsfile.</p></div>
+
+  <h3 id="genai-feature">On <code>feature/rx-2901</code> (skimmed, not audited)</h3>
+  <ul>
+    <li><strong>Size and entry point.</strong> 220 files. The entry point is <code>preciserx_genai.app:app</code> on <code>${SERVER_PORT:-8080}</code>, in a multi-stage <code>python:3.13-slim</code> image.</li>
+    <li><strong>Routes.</strong>
+      <ul>
+        <li><code>/HealthCheck</code>, rate-limited.</li>
+        <li><code>/assistant/token-usage</code> and <code>/assistant/cache</code>.</li>
+        <li><code>POST /ag-ui</code>, the CopilotKit streaming assistant. It requires auth, an assistant-permission check and a monthly token limit, and allows 40 requests per minute per user.</li>
+        <li><code>POST /solana-ag-ui</code>.</li>
+      </ul>
+    </li>
+    <li><strong>Models.</strong> <code>gpt-5.1</code> through the Responses API for the PK and support agents, and <code>text-embedding-3-small</code> for embeddings.</li>
+    <li><strong>Dependencies.</strong> PK-Library's Python bindings from its <code>feature/rx-2901</code> branch; PostgreSQL through asyncpg and psycopg; logfire, which is unscrubbed in development; slowapi; structlog.</li>
+    <li><strong>Missing revocation check.</strong> It has no token-revocation code. RX-3302 landed only on <code>main</code>.</li>
+    <li><strong>Usage records.</strong> Database already has <code>/license/tokens/*</code> and <code>/license/llm-usage</code> endpoints documented as receiving usage from GenAI.</li>
+  </ul>
+  <p>Questions for the owners:</p>
+  <ul>
+    <li>Which branch is deployed?</li>
+    <li>Will RX-3302 be ported?</li>
+    <li>Which hosts are correct? CORS allows <code>*.org</code>, while trusted hosts allow <code>*.com</code>.</li>
+  </ul>
+</section>

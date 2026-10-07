@@ -1,0 +1,119 @@
+AdminActions.ts	hasAdminPrivileges	GET	main	/admin	
+AdminActions.ts	loadEditHistory	GET	database	/admin/history	
+AdminActions.ts	getDatabaseOptions	GET	database	/admin/database/info	dead
+AdminActions.ts	deletePatient	DELETE	database	/admin/delete/patient	
+AdminActions.ts	updatePatientArchiveStatus	POST	database	/cases/archive_cases or /admin/unarchive_cases	
+AdminActions.ts	updateCaseArchiveStatus	POST	database	/cases/archive_case or /admin/unarchive_case	
+AdminActions.ts	deleteCase	DELETE	database	/admin/delete_case	
+AdminActions.ts	updateCaseSite	POST	database	/cases/site_id	
+AdvancedAnalyticsActions.ts	getAnalytics	POST	analysis	/therapeutic-status/analysis	C
+AdvancedAnalyticsActions.ts	getPatientSummary	GET	analysis	/therapeutic-status/patients/cases/{caseNumber}/summary	
+AdvancedAnalyticsActions.ts	getPatientFiltersRoute	GET	main	/drug/routes	
+AdvancedAnalyticsActions.ts	getPatientFiltersDrugFactors	GET	main	/drug/factors	
+AdvancedAnalyticsActions.ts	authenticateSentri7Access	GET	main	/auth/analytics	C
+AKIActions.ts	updateHasAKIHistory	POST	database	/patient/aki_status_at_datetime	
+AKIActions.ts	updateAKIEvents	POST	main	/aki/assessment	
+AKIPredictionActions.ts	predict	GET	machine_learning	/aki/predict	no gateway route; UI trigger commented out
+ApplicationActions.ts	getConnection	GET	main	/status	
+ApplicationActions.ts	updateProgramUpdates	POST	database	/updates	
+ApplicationActions.ts	getProgramUpdates	GET	database	/updates	
+ApplicationActions.ts	saveAssessment	POST	analysis	/therapeutic-status/assessment	after a save
+ApplicationActions.ts	saveCase	PUT or PATCH	database	/patients/cases/save	PUT manual, PATCH autosave
+ApplicationActions.ts	attemptServerReconnect	GET	main	/status	C, no retry
+ApplicationActions.ts	initializeMetadata	GET	main	/metadata	
+ApplicationActions.ts	logout	POST	main	/auth/logout	
+ApplicationActions.ts	revokeToken	POST	main	/user/revoke-token	dead
+ApplicationActions.ts	logDatadogRumError	POST	main	/logs/errors	C
+ApplicationActions.ts	logDatadogRumForm	POST	main	/logs/forms	C
+AuthActions.ts	login	POST	main	/auth/login	C, no session handling, no retry
+AuthActions.ts	signUp	POST	main	/auth/sign-up	C, no session handling, no retry
+AuthActions.ts	resetPassword	POST	main	/auth/reset-password	C, no session handling, no retry
+AuthActions.ts	confirmNewPassword	POST	main	/auth/confirm-reset-password	C, no session handling, no retry
+AuthActions.ts	checkSession	GET	main	/auth/status	no session handling, no retry
+AxiosErrorHandlers.ts	attemptRefreshToken	POST	main	/auth/tokens	raw axios, throttled 10 s
+DrugActions.ts	getDrugs	GET	main	/drug/list	
+DrugActions.ts	getLocalPopModelsWithDrug	GET	database	/population/local_models	
+DrugActions.ts	getPatientModels	POST	main	/pharmacokinetics/patient-models	
+DrugActions.ts	getPrevBayesModels	POST	database	/get_prior_models	
+DrugActions.ts	getDrugInformation	POST	main	/drug	ignore stale
+DrugActions.ts	getDrugFactorWarnings	POST	main	/drug/factors/warnings	
+EHRActions.ts	getMatchingDrugCodes	GET	databridge	/ehr/drug-codes?drug=	
+EHRActions.ts	formatEhrData	POST	databridge	/ehr/format-data	C
+EpicActions.ts	getEpicSessionInfo	GET	databridge	/ehr/epic/session-info	
+ExternalPlatformActions.ts	getCaseSummary	POST	database	/databridge/case_summary	
+ExternalPlatformActions.ts	getAllDrugMetadata	GET	main	/drug/metadata	duplicate of ProtocolSettingsActions
+GraphingActions.ts	fitAndPlot	POST	main	/drug/monitoring/fit-and-plot	cancel duplicates
+GraphingActions.ts	getTherapeuticToxicRange	POST	main	/drug/monitoring/ranges	
+GraphingActions.ts	getIndividualDoseAnalytics	POST	main	/drug/monitoring/dose-analytics	
+IAMActions.ts	hasIAMPrivileges	GET	main	/iam	
+IAMActions.ts	getUserAccountsFromLicense	GET	main	/iam/users	
+IAMActions.ts	getGroupsFromLicense	GET	database	/iam/groups	C
+IAMActions.ts	removeUserFromGroup	DELETE	main	/iam/user/group	C; sends the email as username
+IAMActions.ts	addUserGroup	PUT	main	/iam/user/group	C
+IAMActions.ts	createAccounts	PUT	main	/iam/users	cancel duplicates, C
+IAMActions.ts	deleteAccount	DELETE	main	/iam/user	C
+IAMActions.ts	disableAccount	POST	main	/iam/user/disable	C
+IAMActions.ts	resendInvitationEmail	POST	main	/iam/user/resend-invitation	C
+IAMActions.ts	enableAccount	POST	main	/iam/user/enable	C
+IAMActions.ts	addAccountsToGroups	PUT	main	/iam/users/groups	C
+IAMActions.ts	removeAccountsFromGroups	DELETE	main	/iam/users/groups	C
+LoadActions.ts	loadCaseInfo	POST	database	/cases/load_case	C
+LoadActions.ts	generateCaseContext	POST	main	/search/case	C, ignore stale
+LoadActions.ts	getPK	POST	main	/search/case/pharmacokinetics	C
+LoadActions.ts	loadModels	POST	main	/search/case/models	C
+ModelAnalyticsActions.ts	getAllModels	POST	main	/pharmacokinetics/models	
+ModelAnalyticsActions.ts	getTimeRangeCases	POST	database	/analytics/cases/count	
+ModelAnalyticsActions.ts	getSerumObservationMetrics	POST	database	/analytics/serum/metrics	
+NoteActions.ts	addNote	PUT	database	/notes	C
+NoteActions.ts	deleteNote	DELETE	database	/notes	
+NoteActions.ts	updateNote	POST	database	/notes	C
+NoteActions.ts	getNotes	GET	database	/notes	
+OracleHealthActions.ts	refreshOHTokens	POST	databridge	/ehr/oracle-health/token	
+OracleHealthActions.ts	getOHSessionInfo	GET	databridge	/ehr/oracle-health/session-info	
+PatientActions.ts	getInputAge	POST	main	/pharmacokinetics/age	
+PatientActions.ts	getCrCl	POST	main	/pharmacokinetics/crcl	ignore stale
+PatientActions.ts	getGfr	POST	main	/pharmacokinetics/gfr	ignore stale
+PatientActions.ts	getFF	POST	main	/pharmacokinetics/free-fraction	ignore stale
+PatientActions.ts	getRenalParameters	POST	main	/pharmacokinetics/renal-parameters	ignore stale
+PatientActions.ts	getBodyComp	POST	main	/pharmacokinetics/body-composition	ignore stale
+PatientActions.ts	getDefaultCaseSettings	POST	main	/drug/monitoring/settings	
+PKParametersActions.ts	calculateGeneralPK	POST	main	/pharmacokinetics/bayesian-prior	
+PKParametersActions.ts	calculateBayesPostPK	POST	main	/pharmacokinetics/bayesian-post	
+PKParametersActions.ts	calculateLocalPK	POST	main	/pharmacokinetics/local-population	
+PKParametersActions.ts	loadBayesPrior	POST	database	/bayes	
+PKParametersActions.ts	updateDerivedParameters	POST	main	/pharmacokinetics/derived-parameters	
+PKParametersActions.ts	getRecommendModel	POST	main	/pharmacokinetics/default-model	
+ProfileActions.ts	getLogoutInfo	GET	main	/user/logout-info	C
+ProtocolSettingsActions.ts	getProtocolSettings	GET	database	/protocol-settings	
+ProtocolSettingsActions.ts	getAllDrugMetadata	GET	main	/drug/metadata	
+ProtocolSettingsActions.ts	patchProtocolSettingsOverride	PATCH	database	/protocol-settings/override	
+ProtocolSettingsActions.ts	postProtocolSettings	POST	database	/protocol-settings/{type}-protocol	drug units and SCr/CrCl map to an empty route
+ProtocolSettingsActions.ts	putProtocolSettings	PUT	database	/protocol-settings/{type}-protocol	
+ProtocolSettingsActions.ts	deleteProtocolSettings	DELETE	database	/protocol-settings/{type}-protocol	
+SearchActions.ts	getRecentActiveCases	GET	database	/cases/recent	
+SearchActions.ts	fetchAllCases	GET	database	/cases/search	
+SearchActions.ts	fetchPatientsPage	GET	database	/patients (search terms in the query string)	cancel duplicates
+Sentri7Actions.ts	getS7Tokens	GET	databridge	/sentri7/tokens (x-auth-code header)	no retry; result unchecked
+Sentri7Actions.ts	getS7Data	POST	databridge	/sentri7/data (x-auth-code header)	
+SettingsActions.ts	loadSettings	GET	database	/get_settings	
+SettingsActions.ts	updateInstitutionSettingsOverride	POST	database	/admin/settings/override	
+SettingsActions.ts	updateInstitutionSettings	POST	database	/admin/settings/save	
+SettingsActions.ts	updateTherapeuticAnalyticsSettings	PATCH	database	/admin/settings/therapeutic-settings	
+SettingsActions.ts	updateUserSettings	POST	database	/save-settings	
+SettingsActions.ts	updateAccountPassword	POST	main	/user/password	C
+SettingsActions.ts	updateAccountAttributes	POST	main	/user/attributes	
+SettingsActions.ts	getTourUpdates	GET	database	/updates	duplicate of getProgramUpdates
+SettingsActions.ts	updateTourUpdates	POST	database	/updates	
+SteadyStateActions.ts	getDRPTargetInputs	POST	main	/prediction/dose/inputs	
+SteadyStateActions.ts	getNomogramTargetOutputs	POST	main	/prediction/dose/nomogram	cancel duplicates
+SteadyStateActions.ts	getSingleDoseTargetOutputs	POST	main	/prediction/dose/output	cancel duplicates
+SteadyStateActions.ts	getSerumForecastInputs	POST	main	/prediction/serum/inputs	cancel duplicates
+SteadyStateActions.ts	getSerumForecastOutputs	POST	main	/prediction/serum/output	cancel duplicates
+TherapeuticActions.ts	getTherapeuticTargetOptions	POST	main	/drug/therapeutic-target/options	
+TherapeuticActions.ts	calculateTherapeuticTargetOutput	POST	main	/drug/therapeutic-target/recommendation	C
+TherapeuticActions.ts	recalculateTherapeuticTarget	POST	main	/drug/therapeutic-target/recalculate	
+TherapeuticAnalyticsActions.ts	getTherapeuticStatusOverview	GET	database	/analytics/therapeutic_status_overview	
+UserActions.ts	hasUserPrivileges	GET	main	/user	C
+UserActions.ts	getUserRoles	GET	main	/user/roles	C
+UserActions.ts	validateUserLicense	GET	database	/license/validation	C
+UserActions.ts	getUserProfile	GET	main	/user/info	C; starts Datadog RUM

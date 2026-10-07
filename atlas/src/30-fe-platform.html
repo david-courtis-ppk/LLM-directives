@@ -1,0 +1,171 @@
+
+<section class="doc" id="fe-platform" data-group="Frontend (PreciseRx-Web)" data-title="Platform and boot">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>TypeScript</span><span>React 18 · Vite 7 · Chakra UI 2 · Redux Toolkit</span></p>
+    <h2>Frontend platform</h2>
+    <p class="summary">A single-page React app, built by Vite and hosted on AWS Amplify. All state lives in one Redux store, and all HTTP goes through one axios wrapper. Every page under <code>/</code> passes a bootstrap wrapper that loads the user, license and metadata before anything renders.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Package</dt><dd><code>precisepk</code> 3.5.0, ESM, pnpm 11.4, Node 24</dd></div>
+    <div><dt>UI</dt><dd>Chakra UI 2.8, Emotion, react-router 6.30</dd></div>
+    <div><dt>State</dt><dd>Redux Toolkit 1.9, 18 slices, thunks</dd></div>
+    <div><dt>Charts</dt><dd>Chart.js 4 (+ annotation, boxplot), d3 7</dd></div>
+    <div><dt>i18n</dt><dd>i18next: en, es, ko, th, zh</dd></div>
+    <div><dt>Observability</dt><dd>Datadog RUM with session replay</dd></div>
+    <div><dt>Files</dt><dd>1,329 tracked; 630 in components</dd></div>
+    <div><dt>Tests</dt><dd>Vitest + MSW, ~124 files, ~734 cases</dd></div>
+  </dl>
+
+  <h3 id="fe-layout">Layout</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Path</th><th>Files</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td class="path">src/components/User/</td><td class="num">274</td><td>The clinical workflow: patient home and search, patient info, Drug Monitoring, steady-state analysis, settings. See <a href="#fe-clinical">Clinical workflow</a>.</td></tr>
+      <tr><td class="path">src/components/Analytics/</td><td class="num">94</td><td>Advanced Analytics and Model Analytics.</td></tr>
+      <tr><td class="path">src/components/Admin/</td><td class="num">67</td><td>Institution settings, protocol settings, edit history, patient database.</td></tr>
+      <tr><td class="path">src/components/Shared/</td><td class="num">64</td><td>Tables, inputs, KaTeX citations, report export, settings panels.</td></tr>
+      <tr><td class="path">src/components/ExternalPlatform/</td><td class="num">57</td><td>The EHR and Sentri7 import wizard.</td></tr>
+      <tr><td class="path">src/components/Login/, IAM/, Application/</td><td class="num">73</td><td>Sign-in, user administration, app shell.</td></tr>
+      <tr><td class="path">src/actions/</td><td class="num">37</td><td>Thunks that make every HTTP call. See the <a href="#fe-contract">endpoint contract</a>.</td></tr>
+      <tr><td class="path">src/reducers/, selectors/, middlewares/</td><td class="num">34</td><td>Redux slices, plain selector functions, and the autosave middleware.</td></tr>
+      <tr><td class="path">src/models/</td><td class="num">32</td><td><code>R4/</code> FHIR parsers; <code>pklibraryjs/</code> converters between Redux and the API, with timezone handling; <code>Store/</code> for the C++ patient shape.</td></tr>
+      <tr><td class="path">src/types/, hooks/, utils/</td><td class="num">87</td><td>API and Redux types, <code>withAuth</code> and <code>withRole</code>, and helpers for tokens, Datadog, saving and timezones.</td></tr>
+      <tr><td class="path">public/locales/</td><td class="num">~290</td><td>Translation JSON per language and namespace, loaded over HTTP.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-boot">Boot sequence</h3>
+  <ol class="steps">
+    <li><code>index.html</code> loads <code>src/index.tsx</code>. This mounts <code>ChakraProvider</code> with the PrecisePK theme inside a <code>Suspense</code>, and initializes i18next as a side effect.</li>
+    <li><code>App.tsx</code> refuses Internet Explorer and cookie-less browsers. It then renders <code>&lt;Provider store&gt;</code> around <code>RouterProvider</code>, and stops the mouse wheel from changing number inputs.</li>
+    <li>The <code>/</code> layout route is <code>withAuth(PrecisePKWrapper)</code>. It refreshes the token on reload, then loads:
+      <ul>
+        <li><code>/main/user/info</code>, which also starts Datadog RUM</li>
+        <li><code>/database/license/validation</code></li>
+        <li><code>/main/metadata</code></li>
+        <li><code>/main/status</code>, <code>/user/roles</code>, <code>/user/logout-info</code> and <code>/database/updates</code> in parallel</li>
+      </ul>
+    </li>
+    <li><strong>Version check.</strong> If the client version (<code>package.json</code>) doesn't exactly equal the server's, patch included, the user is sent to <code>/login</code>. Frontend and Main releases must therefore be version-locked.</li>
+    <li><code>PrecisePKWrapper</code> loads all ~72 translation namespaces, routes by preferred role, starts the idle timer, and reports a Datadog view on each route change.</li>
+    <li>Each section home (<code>UserHome</code>, <code>AdminHome</code>, <code>IAMHome</code>, <code>AnalyticsHome</code>) is wrapped in <code>withRole</code>. That calls a privilege probe: <code>/main/user</code>, <code>/main/admin</code> or <code>/main/iam</code>.</li>
+  </ol>
+  <div class="note warn"><span class="label">The client-side role gate never redirects</span><p><code>withRole</code> shows <code>/403</code> only if the probe throws. The HTTP wrapper resolves <code>null</code> on a 403 instead of throwing, so an unauthorized user sees the page shell. Only the backend's per-request checks protect the data. <code>/analytics</code> is gated by the user probe, not an analytics one. (<span class="path">src/hooks/withRole.tsx:19-44</span>; <span class="path">src/actions/AxiosRequestWrappers/AxiosErrorHandlers.ts:75-77</span>)</p></div>
+
+  <h3 id="fe-routes">Routes</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Path</th><th>Component</th><th>Guard</th></tr></thead>
+    <tbody>
+      <tr><td><code>/home</code>, <code>/patient-info</code>, <code>/drug-monitoring</code>, <code>/steady-state-analysis</code>, <code>/settings</code></td><td><code>UserHome</code> → PatientHome, PatientInformation, DrugMonitoring, SteadyStateAnalysis, UserSettings</td><td>withAuth + user probe</td></tr>
+      <tr><td><code>/admin/*</code></td><td><code>AdminHome</code> → edit history, institution and protocol settings, patient database</td><td>withAuth + admin probe</td></tr>
+      <tr><td><code>/iam/user-accounts</code></td><td><code>IAMHome</code> → UserAccounts</td><td>withAuth + IAM probe</td></tr>
+      <tr><td><code>/analytics/{advanced-analytics, model-analytics, therapeutic-settings}</code></td><td><code>AnalyticsHome</code></td><td>withAuth + user probe</td></tr>
+      <tr><td><code>/403</code>, <code>/401</code>, <code>/404</code></td><td>Error pages</td><td>withAuth</td></tr>
+      <tr><td><code>/ehr</code></td><td><code>ExternalPlatformLogin</code> (the import wizard)</td><td>Public; runs its own bootstrap</td></tr>
+      <tr><td><code>/login</code>, <code>/sso-login</code>, <code>/forgot-password</code></td><td><code>LoginWrapper</code></td><td>Public</td></tr>
+      <tr><td><code>/external-platform-workflow</code></td><td>Sentri7 simulator</td><td>Public, in every environment including production</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-state">State</h3>
+  <p>One store (<span class="path">src/store.ts</span>) with thunks, and with the immutable and serializable checks turned off. Redux DevTools is on in every environment except production, so staging case data, which is PHI, can be inspected there.</p>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Slice</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td><code>application</code></td><td>In-flight request map, the current case's database identity (<code>case_num</code>, <code>rec_num</code>, last-saved inputs, saving status, site), HTTP error status, metadata from <code>/metadata</code>, app and server versions, and the autosave pause flag.</td></tr>
+      <tr><td><code>profile</code></td><td>Email, name, license (site type, sites, user types), roles, preferred role, logout info, site info, and whether the user is SSO or an external-platform user.</td></tr>
+      <tr><td><code>patient</code></td><td>Demographics, body composition and its derived metrics, covariates, drug factors, and lab results (SCr history, CrCl and GFR, AKI assessments, lab measurements, warnings).</td></tr>
+      <tr><td><code>drug</code></td><td>Drug name and list, routes, models (selected, recommended, local population, previous Bayesian), units, settings, flags, citations.</td></tr>
+      <tr><td><code>history</code></td><td>Dosage, serum, dialysis and CL-RRT histories, with undo buffers for deleted entries.</td></tr>
+      <tr><td><code>pk_parameters</code></td><td><code>pk_bayes_prior</code>, <code>pk_bayes</code>, the theoretical and comparison priors (each with fitted, derived, route-dependent and special parameters), and the prior option.</td></tr>
+      <tr><td><code>graphing</code></td><td>Prior and posterior graphs, an 11 × 11 covariance, fitting settings and diagnostics, graph settings, and therapeutic and toxic bounds.</td></tr>
+      <tr><td><code>steadystate</code>, <code>therapeutic</code></td><td>Dose regimen, nomogram, serum forecast; therapeutic target input, options and output.</td></tr>
+      <tr><td><code>settings</code>, <code>protocol_settings</code></td><td>User and institution settings, effective settings, and the six protocols.</td></tr>
+      <tr><td><code>search</code>, <code>notes</code>, <code>external_platform</code></td><td>Patient search results; case notes; EHR import state (provider, session, imported data, case sync).</td></tr>
+      <tr><td><code>advanced_analytics</code>, <code>model_analytics</code>, <code>therapeutic_analytics</code>, <code>aki_prediction</code></td><td>Analytics filters and results; the AKI machine-learning prediction, whose UI trigger is commented out.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>Two cross-cutting actions.</strong> <code>NEW_PATIENT</code> resets every case slice but keeps profile, settings, analytics and application (with its database reset). <code>USER_LOGOUT</code> resets everything. Both are in <span class="path">src/reducers/RootReducer.ts:62-105</span>.</p>
+  <p><strong>Autosave.</strong> <span class="path">src/middlewares/autosaveMiddleware.ts</span> runs after every action. It compares a snapshot of the tracked inputs before and after. If they changed and autosave is enabled in settings, it schedules a debounced save 5 s later (<code>PATCH /database/patients/cases/save</code>). It skips autosave while importing or saving, after a failed save, when the case is invalid, or while paused.</p>
+
+  <h3 id="fe-http">The HTTP layer</h3>
+  <p>Every call is <code>axiosRequestWrapper({method, server, route, wrapperConfig}, data, axiosConfig, onSuccess, onFailure)(dispatch)</code>, defined in <span class="path">src/actions/AxiosRequestWrappers/index.ts</span>.</p>
+  <ul>
+    <li><strong>URL.</strong> <code>getServerIP() + path.join(serverApiPaths[server], route)</code>. <code>getServerIP()</code> hard-codes one host per <code>VITE_ENVIRONMENT</code> (<span class="path">src/utils/utils.ts:40-53</span>). The result is an absolute URL, so the axios <code>baseURL</code> (<code>VITE_SERVER_BASE_URL</code>) is ignored for wrapped calls. It is still used to build the SSO redirect URI.</li>
+    <li><strong>Prefixes.</strong> <code>main/</code>, <code>database/</code>, <code>databridge/</code>, <code>analysis/</code> and <code>machine_learning/</code>, each followed by <code>VITE_SERVER_API_VERSION</code>. That value is the blue-green lane (<code>v1</code> or <code>v2</code>), set per Amplify branch (RX-3666). No gateway route serves <code>machine_learning</code>.</li>
+    <li><strong>Cookies.</strong> Always sent (<code>withCredentials: true</code>). The Accept header asks for <code>version=1.0</code>.</li>
+    <li><strong>Options.</strong>
+      <ul>
+        <li><code>retryRequest</code>: up to 5 tries, 3 s apart.</li>
+        <li><code>customErrorHandler</code>: route errors to the caller.</li>
+        <li><code>handleSessionErrors</code>: on a 401, refresh and retry.</li>
+        <li><code>cancelDuplicateRequests</code>: abort an in-flight call with the same method and route.</li>
+        <li><code>preventNetworkRace</code>: ignore stale responses.</li>
+      </ul>
+    </li>
+    <li><strong>Errors.</strong>
+      <ul>
+        <li>A 401 whose body says <code>ExpiredTokenError</code> triggers <code>POST /main/auth/tokens</code>, throttled to one per 10 s, then a retry.</li>
+        <li>Any other 401 logs out.</li>
+        <li>A 403 records the status and resolves <code>null</code>.</li>
+        <li>A 500 retries.</li>
+        <li>No response shows the "connection failed" overlay.</li>
+      </ul>
+    </li>
+    <li><strong>Calls outside the wrapper.</strong> The token refresh, the browser-direct FHIR calls to Epic and Oracle Health (Bearer token from a cookie), and the Sentri7 simulator.</li>
+  </ul>
+
+  <h3 id="fe-session">Sessions in the browser</h3>
+  <ul>
+    <li><strong>Password sign-in.</strong> <code>POST /main/auth/login</code>. On success the app validates the license and goes to <code>/home</code>. <code>NEW_PASSWORD_REQUIRED</code> opens the first-sign-in form. <code>MFA_REQUIRED</code> hits a no-op <code>break</code>, so the spinner never stops.</li>
+    <li><strong>SSO.</strong> The browser goes to the Cognito hosted UI with <code>redirect_uri=${VITE_SERVER_BASE_URL}/main/{lane}/auth/token</code>, and the backend exchanges the code. The request carries no <code>state</code> or PKCE, and <code>redirect_uri</code> isn't URL-encoded.</li>
+    <li><strong>Refresh.</strong> Happens on page reload, lazily on an expired-token 401, and from the idle prompt. There is no refresh timer.</li>
+    <li><strong>Idle.</strong> 30 minutes, with a prompt 5 minutes before. EHR users are logged out with no prompt, because only the prompt is hidden for them. Each tab keeps its own timer.</li>
+    <li><strong>Logout.</strong> <code>POST /main/auth/logout</code>, then a redirect based on <code>/user/logout-info</code>. The client-side <code>logoutUser()</code> also runs <code>localStorage.clear()</code>.</li>
+    <li><strong>Roles.</strong> <code>/main/user/roles</code>. The client adds <code>settings</code> unless the only role is IAM, and adds <code>IAM</code> whenever <code>admin</code> is present.</li>
+  </ul>
+
+  <h3 id="fe-build">Build, deploy and environment</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>What</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Scripts</td><td><code>pnpm start</code> (Vite on :3000), <code>pnpm build</code> (<code>tsc -b &amp;&amp; vite build</code> to <code>build/</code>), <code>pnpm typecheck</code>, <code>pnpm test</code> (Vitest with <code>VITE_ENVIRONMENT=development</code>). <code>pnpm docs</code> is broken because its config was deleted. There is no lint script.</td></tr>
+      <tr><td>Local env</td><td><code>make generate-env stage=development</code> reads the <code>Development-Client-Secrets</code> secret with the staging SSO profile. The local backend is the umbrella gateway on <code>http://localhost</code>, with no Vite proxy.</td></tr>
+      <tr><td>Amplify</td><td><code>amplify.yml</code>: nvm to Node 24, corepack pnpm, a frozen install, then <code>pnpm run build</code> with a 4 GB heap. Artifacts are <code>build/**</code>. No tests run. Branch-to-environment mapping, SPA rewrites and security headers live in the Amplify console, not the repo.</td></tr>
+      <tr><td>CI</td><td>On pull requests: frozen install, <code>pnpm build</code>, <code>pnpm test</code>. No lint and no coverage.</td></tr>
+      <tr><td>Supply chain</td><td>pnpm 11 with a 72-hour release age, build-script allowlist (<code>esbuild</code>, <code>msw</code>), store integrity, CVE overrides for <code>ws</code> and <code>form-data</code>, daily Dependabot with a 3-day cooldown.</td></tr>
+      <tr><td>Lint</td><td>ESLint with airbnb and the <code>only-warn</code> plugin, which turns every error into a warning. It isn't run by CI or any script.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Variable</th><th>Controls</th></tr></thead>
+    <tbody>
+      <tr><td><code>VITE_ENVIRONMENT</code></td><td>API host, DevTools, Datadog on or off, socket path shape, cookie flags, SSO provider list, staging banner.</td></tr>
+      <tr><td><code>VITE_SERVER_API_VERSION</code></td><td>The blue-green lane segment in every API path and the socket path.</td></tr>
+      <tr><td><code>VITE_SERVER_BASE_URL</code></td><td>Only the SSO <code>redirect_uri</code> in practice.</td></tr>
+      <tr><td><code>VITE_ANALYTICS_SOCKET_ENDPOINT</code></td><td>The Socket.IO origin, separate from the API host.</td></tr>
+      <tr><td><code>VITE_DD_RUM_APP_ID</code>, <code>VITE_DD_RUM_CLIENT_TOKEN</code></td><td>Datadog RUM.</td></tr>
+      <tr><td><code>VITE_SSO_APP_CLIENT_ID</code>, <code>VITE_SSO_AUTH_ENDPOINT</code>, <code>VITE_PARENT_DOMAIN</code></td><td>SSO authorize URL; cookie domain.</td></tr>
+      <tr><td><code>VITE_SENTRI7_*</code></td><td>The Sentri7 simulator's app clients.</td></tr>
+      <tr><td><code>VITE_ENABLE_MODEL_FIT_DEMO</code></td><td>Uncommitted RX-3699 demo gate; the demo also shows whenever Vite is in dev mode.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-observability">Datadog and PHI</h3>
+  <div class="note crit"><span class="label">What reaches Datadog</span>
+    <p>RUM is initialized outside development with <code>sessionSampleRate: 100</code>, <code>sessionReplaySampleRate: 100</code>, <code>defaultPrivacyLevel: 'mask-user-input'</code> and <code>trackResources: true</code> (<span class="path">src/utils/DatadogRumUtility.ts:13-33</span>). <code>mask-user-input</code> masks form fields, but other rendered text is recorded unless an element is marked <code>data-dd-privacy="mask"</code>. 62 elements in 26 files are marked.</p>
+    <p>On an Epic or Oracle Health import, the FHIR Patient resource is sent as a Datadog action after <code>R4Patient.prepareLogs</code>. That function redacts the name only, and keeps <code>birthDate</code>, <code>identifier</code> (MRN), <code>gender</code>, race extensions and <code>managingOrganization</code> (<span class="path">src/models/R4/R4Patient.ts:307-342</span>; sent at <span class="path">src/actions/EpicActions.ts:148-150</span>). Observation and medication logs keep values, dates, order identifiers and free-text notes.</p>
+    <p>Whether a Datadog BAA covers this isn't in the code. Ask the compliance owner.</p>
+  </div>
+
+  <h3 id="fe-socket">Real-time</h3>
+  <p>The only Socket.IO client is created in <span class="path">src/components/Analytics/ModelAnalytics/ModelAnalytics.tsx:49-73</span>.</p>
+  <ul>
+    <li><strong>Connection.</strong> It connects to <code>${VITE_ANALYTICS_SOCKET_ENDPOINT}/serum-analysis</code> using polling only, with credentials. The path is <code>/analysis/{lane}/socketio</code> locally and <code>/socketio/{lane}</code> when deployed.</li>
+    <li><strong>Token update handler.</strong> A <code>token:update_usertoken</code> handler writes to <code>socket.auth.token</code>. No <code>auth</code> option is ever passed, so that write would throw if the server ever sent the event.</li>
+    <li><strong>Unused context.</strong> <code>SocketContext</code> is declared but never provided.</li>
+  </ul>
+
+  <h3 id="fe-i18n">Translations</h3>
+  <p>i18next loads <code>/locales/{lng}/{ns}.json</code> over HTTP and falls back to English. English has 71 namespaces (72 with the RX-3699 demo). Spanish, Korean, Thai and Chinese have 54 each, missing the same 19. Those include Advanced Analytics, protocol settings and the external-platform wizard, which appear in English for those users. The language is detected from the query string, cookie, localStorage or browser, and switched in General Settings.</p>
+</section>

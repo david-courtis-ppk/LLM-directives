@@ -1,0 +1,146 @@
+
+<section class="doc" id="databridge" data-group="Backend services" data-title="Databridge">
+  <header>
+    <p class="eyebrow"><span>src/apis/PreciseRx-Databridge</span><span>JavaScript</span><span>Express 4</span><span>/databridge/v1</span></p>
+    <h2>PreciseRx-Databridge</h2>
+    <p class="summary">Databridge brings EHR and partner data into PrecisePK. It runs SMART on FHIR launches, where a clinician opens PrecisePK from inside Epic or Oracle Health. On first launch it creates the clinician's Cognito account. It keeps each session's EHR context in Redis, and it converts parsed patient, lab and dose data into PrecisePK's case shape. The browser, not Databridge, reads the FHIR data.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Framework</dt><dd>Express 4.22, joi 18, node-redis 4</dd></div>
+    <div><dt>Partners</dt><dd>Epic, Oracle Health (formerly Cerner), Sentri7</dd></div>
+    <div><dt>Engine use</dt><dd>Unit conversions and defaults only</dd></div>
+    <div><dt>Integrated drug</dt><dd>Vancomycin</dd></div>
+    <div><dt>Local</dt><dd>Databridge-Server, host :8002</dd></div>
+    <div><dt>Tests</dt><dd>11 Jest files, ~125 cases</dd></div>
+  </dl>
+
+  <h3 id="dbr-glossary">Partners, as the code sees them</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Partner</th><th>What the code does</th></tr></thead>
+    <tbody>
+      <tr><td>Epic</td><td>EHR launch as a confidential client. One <code>EPIC_CLIENT_ID</code> for all customers, with a secret per customer in Secrets Manager (a JSON map from identifier to secret). User identity and encounter context arrive as Epic "Token Library" parameters in the token response. The browser also calls Epic's private <code>GetMedicationAdministrationHistory</code> API.</td></tr>
+      <tr><td>Oracle Health</td><td>EHR launch with <code>online_access</code>, so a refresh token is issued. One client ID and secret for every customer. Databridge uses the token introspection and revocation endpoints.</td></tr>
+      <tr><td>Sentri7</td><td>An external platform that POSTs patient, lab and medication JSON to <code>/sentri7/import</code>, authenticated with an authorization code from one of two Cognito pools (V1, V2).</td></tr>
+      <tr><td>SSO</td><td>A Cognito pool whose tokens Databridge accepts and checks for revocation. SSO sign-in itself happens in Main.</td></tr>
+      <tr><td>Solana</td><td>Only env var names. Nothing reads them, and Databridge would reject a Solana token.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="dbr-epic">The Epic launch</h3>
+  <pre class="mermaid">
+sequenceDiagram
+  participant E as Epic
+  participant B as Browser
+  participant G as Gateway
+  participant X as Databridge
+  participant D as Database API
+  participant C as Cognito (Epic pool)
+  E->>B: open PrecisePK with iss and launch
+  B->>G: GET /databridge/v1/ehr/epic/launch
+  G->>X: adds X-API-Key
+  X->>D: GET /ehr/epic/issuers (validate iss, cached 1 h)
+  X->>E: GET iss/metadata for authorize and token URLs
+  X-->>B: 302 to Epic authorize (aud, client_id, launch, redirect_uri, scope). No state, no PKCE.
+  B->>E: authorize
+  E-->>B: 302 to /ehr/epic/IDENTIFIER/callback?code=
+  B->>X: callback (X-API-Key added by gateway)
+  X->>E: token exchange with that identifier's secret from Secrets Manager
+  E-->>X: access_token, id_token, Token Library params (identifier, patientFhirID, csn, ...)
+  X->>D: GET /ehr/epic/tenants/(identifier from token response)/groups
+  X->>C: create user if new, set a random password, sign in server-side
+  X->>X: encrypt session into Redis, keyed by sha256 of the PPK token jti
+  X-->>B: set cookies, 302 to client /ehr?provider=epic
+  B->>X: GET /ehr/epic/session-info
+  B->>E: FHIR Patient, Observation, MedicationRequest, private MAR API
+  B->>X: POST /ehr/format-data
+  X-->>B: Redux-shaped case
+  </pre>
+  <div class="note crit"><span class="label">Two gaps in this flow</span>
+    <p><strong>No OAuth <code>state</code> and no PKCE.</strong> Neither the Epic nor the Oracle Health authorize redirect includes them (<span class="path">controllers/ehr/epic/get-launch.js:41-48</span>; <span class="path">controllers/ehr/oracle-health/get-authorization-url.js:32-39</span>), and nothing in <code>src/</code> generates or checks either. SMART App Launch v2.2.0 marks <code>state</code> required, "with at least 122 bits of entropy", and requires PKCE for public and confidential clients alike (<a href="https://hl7.org/fhir/smart-app-launch/app-launch.html">hl7.org/fhir/smart-app-launch</a>). <code>STATE_SIGNING_KEY</code> is in <code>.env</code>, but nothing reads it.</p>
+    <p><strong>The callback uses two identifiers without comparing them.</strong> It authenticates the code exchange with the identifier from the URL path, but it provisions the account against the <code>identifier</code> from Epic's token response (<span class="path">get-callback.js:165-182</span>). The risk is a misconfigured customer placing users in the wrong institution, not an outside attacker, because the token response is authenticated.</p>
+  </div>
+  <p>Account details on first launch:</p>
+  <ul>
+    <li>The username is <code>${id_token.sub}:${tenantId}</code>, lowercased. The id token is decoded, not verified.</li>
+    <li>The user is added to the institution's <code>All</code> and <code>user</code> groups. Every launch resets <code>custom:license_name</code> and sets a new random 32-character password.</li>
+    <li>Multi-site customers need an encounter-facility NPI or an admin location ID. Databridge creates the facility row and a site group if they are missing, but no code here adds the user to that site group.</li>
+  </ul>
+
+  <h3 id="dbr-oracle">The Oracle Health launch</h3>
+  <ol class="steps">
+    <li><code>GET /ehr/oracle-health/authorization-url?iss=&amp;launch=</code>. It validates the issuer with Database (exact match, cached 1 h) and discovers the authorize, token, revoke and introspect URLs. It then redirects with scopes <code>online_access launch openid patient/Patient.read patient/Observation.read patient/MedicationAdministration.read</code>.</li>
+    <li><code>GET /ehr/oracle-health/tokens?issuer=&amp;code=</code>. It exchanges the code with the single global credential. It then creates or refreshes the Cognito user (<code>${username}-${tenant}</code>) and introspects the token for its expiry.</li>
+    <li>It stores the encrypted refresh token and session in Redis, and sets <code>_o_h_access_token</code>, which JavaScript can read, plus the Cognito cookies. It redirects to <code>/ehr?provider=oracle-health</code>. The error path redirects to the same URL.</li>
+    <li>The browser calls <code>GET /ehr/oracle-health/session-info</code>, and refreshes with <code>POST /ehr/oracle-health/token</code>.</li>
+    <li>When the Redis key expires after an hour, a keyspace subscriber reads the shadow copy and revokes the refresh token at Oracle Health. In production that depends on keyspace notifications being enabled in Valkey.</li>
+  </ol>
+
+  <h3 id="dbr-sentri7">Sentri7</h3>
+  <ol class="steps">
+    <li>Sentri7's server calls <code>POST /sentri7/import</code> with <code>x-auth-code</code> and a body of patient, labs and medication. Databridge exchanges the code at the matching Cognito pool.</li>
+    <li>It stores <code>{importData, tokens}</code> as <strong>plain text</strong> under the raw auth code for 60 s, and returns <code>redirect_uri=&lt;client&gt;/ehr?provider=sentri7&amp;code=…</code>.</li>
+    <li>The browser calls <code>GET /sentri7/tokens</code>. Databridge sets the Cognito cookies and also returns the tokens in the body. It does not delete the key, so the code can be replayed within the 60 s.</li>
+    <li>The browser calls <code>POST /sentri7/data</code>, which formats the parked import with the same mappers. It doesn't check that the caller owns the import.</li>
+  </ol>
+
+  <h3 id="dbr-format">Turning EHR data into a case</h3>
+  <p><code>POST /ehr/format-data</code> validates <code>patient</code>, <code>labInfo</code> and <code>medicationInfo</code>. It returns <code>{drug_list, non_integrated_drug_list, patient_info: {dosage_histories, drug, patient, serum_histories}}</code> (<span class="path">controllers/ehr/post-format-data.js:55-119</span>).</p>
+  <ul>
+    <li><strong>Patient.</strong> Age comes from the birthdate, truncated to two decimals. BSA comes from PK-Library. SCr history is converted to the user's unit. CrCl reported per 1.73 m² is converted to mL/min using BSA. Amputation values are standardized.</li>
+    <li><strong>Doses.</strong> These are sorted and routes are cleaned. A missing infusion time comes from PK-Library. A missing interval is filled with the gap to the next dose, then the previous dose's interval, then 12 h, capped at 7 days. Continuous infusions become hourly rates. When the infusion time is <code>-1</code> or <code>0</code>, the per-hour normalization produces negative or infinite doses.</li>
+    <li><strong>Levels.</strong> Creatinine and drug levels, converted to the drug's concentration unit. In production the serum amount-unit list is hard-coded under a <code>// @TODO Delete before release</code> comment.</li>
+    <li><strong>Code lists.</strong> <code>/ehr/drug-codes</code> returns RxNorm medication codes (21 drugs) and LOINC lab codes (24 files, 21 imported). The key <code>ValproicAcid</code> doesn't match PK-Library's <code>"Valproic Acid"</code>. Valproic acid imports therefore likely get empty code lists.</li>
+    <li><strong>Per-customer rules.</strong> Which MAR actions and MedicationRequest statuses count is hard-coded by URL substring for three named health systems, with <code>@todo Move to database tables</code> (<span class="path">epic/get-session-info.js:82-161</span>).</li>
+  </ul>
+
+  <h3 id="dbr-routes">Routes</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th><th>Auth</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/epic/launch</code></td><td>Validates <code>iss</code> and redirects to Epic's authorize page.</td><td>API key</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/epic/:identifier/callback</code></td><td>Code exchange, account provisioning, session, cookies, redirect.</td><td>API key</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/epic/session-info</code></td><td>The decrypted session plus the customer's filters.</td><td>Cognito</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/oracle-health/authorization-url</code></td><td>Validates <code>iss</code> and redirects to Oracle Health's authorize page.</td><td>API key</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/oracle-health/tokens</code></td><td>Code exchange, provisioning, refresh-token storage, redirect.</td><td>API key</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/ehr/oracle-health/token</code></td><td>A new Oracle Health access token from the stored refresh token.</td><td>Cognito</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/oracle-health/session-info</code></td><td>Patient, user, expiry, issuer.</td><td>Cognito</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/ehr/drug-codes?drug=</code></td><td>RxNorm and LOINC code lists for one drug.</td><td>Cognito</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/ehr/format-data</code></td><td>Converts browser-parsed FHIR data into the case shape.</td><td>Cognito</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/sentri7/import</code></td><td>Receives Sentri7's data and parks it for 60 s.</td><td>Sentri7 auth code</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/sentri7/tokens</code></td><td>Trades the code for Cognito tokens, returned as cookies and in the body.</td><td>API key + code</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/sentri7/data</code></td><td>Formats the parked Sentri7 data.</td><td>Cognito + code</td></tr>
+    </tbody>
+  </table></div>
+  <p>All <code>/ehr</code> and <code>/sentri7</code> routes are limited to 50 requests per 10 minutes per IP, counted in memory per process. A hospital behind one NAT address shares a single budget. The API key only proves the request passed through the gateway, which injects it. It is compared with <code>===</code>, while Database uses a constant-time comparison.</p>
+
+  <h3 id="dbr-security">Storage and PHI</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Redis key</th><th>Contents</th><th>Expiry</th></tr></thead>
+    <tbody>
+      <tr><td><code>refreshToken:&lt;h&gt;</code></td><td>Oracle Health: encrypted refresh token and issuer. Epic: the encrypted session.</td><td>3,600 s</td></tr>
+      <tr><td><code>session-refreshToken:&lt;h&gt;</code></td><td>Encrypted session: patient ID, user, CSN, facility.</td><td>3,630 s</td></tr>
+      <tr><td><code>exp-refreshToken:&lt;h&gt;</code></td><td>Oracle Health shadow copy, kept for revocation.</td><td>3,630 s</td></tr>
+      <tr><td><code>issuer-refreshToken:&lt;h&gt;</code></td><td>Epic identifier in plain text.</td><td>3,630 s</td></tr>
+      <tr><td>raw Sentri7 auth code</td><td>Plain-text PHI (name, birthday, MRN, labs, doses) and Cognito tokens.</td><td>60 s</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Encryption.</strong> AES-256-CBC with no authentication tag. The key is <code>scryptSync(secret, 'salt', 32)</code>, with a fixed salt, recomputed on every call (<span class="path">utilities/crypto-utilities.js:29-98</span>).</li>
+    <li><strong>Cookies.</strong> The two EHR access-token cookies are readable by JavaScript, because the browser needs them for FHIR calls. Any XSS on the PrecisePK domain would expose FHIR access.</li>
+    <li><strong>Logs.</strong> The access log records full URLs, including OAuth codes and the Epic launch token. Raw axios errors are logged in 13 places and can carry request headers or Basic credentials.</li>
+    <li><strong>Audit.</strong> Creating Cognito users, resetting passwords and creating groups or facilities are not audit-logged. The only trail is one access-log line per request.</li>
+  </ul>
+
+  <h3 id="dbr-tests">Tests and debt</h3>
+  <ul>
+    <li><strong>Test gaps.</strong> Jest covers the Sentri7 mappers, import schema, session-info filters, revocation, pairing, trust proxy and IP context. No tests cover the Epic or Oracle Health launch, callback or token controllers, the crypto helpers, the expiry handler, or the API-key check.</li>
+    <li><strong>Dead code.</strong> <code>services/fhir/*</code> (never imported); about 755 KB of sample FHIR data containing identifiers, shipped in the production image; unused env vars that are still required at boot.</li>
+    <li><strong>Error handling.</strong> Two paths return the wrong status:
+      <ul>
+        <li>The multi-site error handler overwrites its own branches, so every error returns 400.</li>
+        <li><code>HttpStatus.InternalError</code> is undefined, so an internal error returns 400.</li>
+      </ul>
+    </li>
+    <li><strong>Misleading names.</strong> <code>SENTRI7_REDIS_URL</code> holds all EHR data, and the <code>:issuer</code> route parameter is really the identifier.</li>
+  </ul>
+</section>

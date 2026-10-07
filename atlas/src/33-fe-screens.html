@@ -1,0 +1,161 @@
+
+<section class="doc" id="fe-analytics" data-group="Frontend (PreciseRx-Web)" data-title="Analytics, Admin, IAM screens">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>src/components/{Analytics, Admin, IAM}/</span></p>
+    <h2>Analytics, Admin and IAM screens</h2>
+    <p class="summary">Three sections that clinicians switch to from the app switcher. Each appears in the switcher only for the matching role: <code>analytics</code>, <code>admin</code> or <code>IAM</code>. The route guard behind each one never redirects (<a href="#fe-boot">see Boot</a>), so the backend is what actually protects them.</p>
+  </header>
+
+  <h3 id="fe-an">Analytics</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Screen</th><th>Shows</th><th>Calls</th></tr></thead>
+    <tbody>
+      <tr><td>Advanced Analytics</td><td>Filters: drug, route, target, sex, age, CrCl, AKI, drug factors, sites. Three cards: Therapeutic Status Overview, Therapeutic Target Insights (box plots from quartiles the server precomputes), and AKI Analytics. Clicking any chart opens a patient list, then a summary.</td><td>5 parallel <code>POST /analysis/therapeutic-status/analysis</code> calls (current window plus 1, 3, 6 and 12 months back); <code>GET …/patients/cases/:caseNum/summary</code>. The <code>/aki-analysis/*</code> routes are never called; AKI charts are rebuilt from the analysis response.</td></tr>
+      <tr><td>Model Analytics</td><td>Observed against predicted levels for vancomycin, as a scatter of population and individual predictions with regression lines, R², MSE and NRMSD.</td><td>Socket.IO <code>serum:prepare</code> → <code>message</code> → <code>serum:calculate</code> → <code>serum:created_jobs</code> → <code>serum:completed_job</code> or <code>serum:failed_job</code>. The client polls with <code>serum:monitor</code> every 5 s and times out at 15 s. It also calls Database <code>/analytics/cases/count</code> and <code>/analytics/serum/metrics</code>, and Main <code>/pharmacokinetics/models</code>.</td></tr>
+      <tr><td>Therapeutic Settings</td><td>Default analytics target ranges per drug. The button is admin-only; the route isn't.</td><td><code>PATCH /database/admin/settings/therapeutic-settings</code></td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Effect of the backend broadcast bug.</strong> The <code>serum:failed_job</code> handler replaces the matching job by <code>serum_id</code> unconditionally, and doesn't check which query it belongs to. Combined with the Analytics server's broadcast (<a href="#analytics">see Analytics</a>), another user's job with an overlapping serum ID overwrites this user's result. That can turn a good point into a failure and change the statistics after they're on screen. Other users' results with no matching ID are dropped silently, but they have already reached the browser.</li>
+    <li><strong>NRMSD doesn't match its displayed formula.</strong> The code computes √MSE ÷ mean(observed) (<span class="path">…/utils/calculateStatistics.ts:109-119</span>). The formula shown to users is √(Σ(O − P)² / Σ(O − Ō)²) (<span class="path">SerumPredictionStatistics.tsx:54</span>). Those are different statistics, so the number doesn't match its own definition.</li>
+    <li><strong>Other issues.</strong>
+      <ul>
+        <li>The axes stop at 40, but levels above 40 still count in the statistics.</li>
+        <li>Age in weeks is converted with ÷ 54 instead of ÷ 52.</li>
+        <li>The timeout comment says 60 s, but the code uses 15 s, and the timer isn't cleared on unmount.</li>
+        <li>The site filter is enabled in opposite cases on the two pages. On Model Analytics it's disabled for admins; on Advanced Analytics it's enabled only for admins.</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3 id="fe-admin">Admin</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Screen</th><th>Shows</th><th>Calls and behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Institution settings</td><td>Institution-wide general settings and an "override for all users" switch.</td><td>Save confirms first: <code>POST /admin/settings/save</code>. The override switch saves immediately, with no confirmation: <code>POST /admin/settings/override</code>.</td></tr>
+      <tr><td>Protocol settings</td><td>Default target input, max dose, peak time and infusion time rules, up to 20 per drug and tab, with overlap detection. Drug-units and SCr/CrCl-warnings pages are routed but hidden from the navigation, and their API routes are empty strings.</td><td>Save shows a diff of added, edited and deleted rules. It then sends <strong>three sequential, non-atomic</strong> requests (DELETE, POST, PUT). A failure in one doesn't stop the others and isn't reported. The override switch updates optimistically, with no rollback.</td></tr>
+      <tr><td>Edit history</td><td>The audit table: case create, update, load, archive and delete, for the last 30 days.</td><td><code>GET /admin/history</code>. A failed load crashes the table on <code>null.map</code>. Settings, protocol and IAM changes never appear here, because the backend doesn't record them.</td></tr>
+      <tr><td>Patient database</td><td>The shared search in admin mode, with archive, unarchive, delete and change site.</td><td>Unarchive fires straight from the menu with no confirmation. Delete is a one-click modal. A failed request leaves the modal stuck loading.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="fe-iam">IAM (user administration)</h3>
+  <ul>
+    <li><strong>The screen.</strong> One screen, <code>/iam/user-accounts</code>: summary cards, permission filters, the user table, and overlays for invite, edit role and site, disable, enable, delete, resend invitation and password reset. SSO administrators get a read-only view.</li>
+    <li><strong>Invite.</strong>
+      <ul>
+        <li>Up to 10 emails. Emails on a different domain need an "Invite anyway".</li>
+        <li><code>PUT /main/iam/users</code> creates the accounts, then <code>PUT /main/iam/users/groups</code> adds the <code>user</code> group plus the inviting admin's own site group.</li>
+        <li>The email check has no anchors, so any string that contains an email passes.</li>
+      </ul>
+    </li>
+    <li><strong>Role change.</strong>
+      <ul>
+        <li>The UI allows one role per user: admin, user or IAM.</li>
+        <li>Non-role groups (All, analytics, site, site_admin) are kept when the role changes (RX-3582).</li>
+        <li>Because <code>analytics</code> is filtered out of every control, IAM can keep it but can never grant or revoke it.</li>
+        <li>The change is sent as <code>PUT /iam/user/group</code> (add), then <code>DELETE /iam/user/group</code> (remove). The remove request passes the <strong>email</strong> as <code>username</code>, while test fixtures show usernames are UUIDs. If Main rejects it, a demoted admin keeps the admin group.</li>
+      </ul>
+    </li>
+    <li><strong>Disable, enable, delete.</strong> Each needs one confirmation, and checks that <code>sub</code>, <code>userPoolId</code> and <code>username</code> are present first (RX-3302). Nothing stops an IAM user from disabling, deleting or demoting their own account.</li>
+    <li><strong>Tests.</strong> About 115 across 12 files. This is the best-tested area of the frontend.</li>
+  </ul>
+</section>
+
+<section class="doc" id="fe-ehr" data-group="Frontend (PreciseRx-Web)" data-title="EHR import and sign-in">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>src/components/{ExternalPlatform, Login, Application, Shared}/</span></p>
+    <h2>EHR import, sign-in and the app shell</h2>
+    <p class="summary">When a clinician launches from Epic or Oracle Health, Databridge redirects them to <code>/ehr?provider=…</code>. From there the browser runs a step-by-step import wizard. It reads the EHR token from a cookie, queries FHIR directly, asks Databridge to shape the result into a case, and either creates a new case or syncs an existing one.</p>
+  </header>
+  <h3 id="fe-ehr-flow">The import wizard</h3>
+  <ol class="steps">
+    <li><strong>Mount.</strong> <code>/ehr</code> sits outside the <code>withAuth</code> wrapper, so it has no idle timer and no navigation bar. On mount it resets the case (<code>NEW_PATIENT</code>) and pauses autosave. That stops a stale case from being saved as a duplicate (BLITZ-3.6.0-1). The reset happens even when <code>provider</code> is missing, and in that case the page stays on "connecting" forever.</li>
+    <li><strong>Connect.</strong>
+      <ul>
+        <li><strong>Epic:</strong> read <code>_epic_access_token</code>, then <code>GET /databridge/ehr/epic/session-info</code>, which returns the issuer, patient FHIR ID, CSN, system login, facility, medication statuses to accept, MAR actions to skip, and the timeline window.</li>
+        <li><strong>Oracle Health:</strong> read <code>_o_h_access_token</code>, then <code>GET /ehr/oracle-health/session-info</code>. The token is refreshed through <code>POST /ehr/oracle-health/token</code> when less than 3 minutes remain.</li>
+        <li><strong>Sentri7:</strong> <code>GET /sentri7/tokens</code> with <code>x-auth-code</code> (its result isn't checked), then <code>POST /sentri7/data</code>.</li>
+      </ul>
+    </li>
+    <li><strong>Common setup.</strong> License validation, metadata, settings, protocol settings, and the user profile (which starts Datadog).</li>
+    <li><strong>Patient.</strong> FHIR <code>Patient/{id}</code>, parsed by <span class="path">src/models/R4/R4Patient.ts</span>. For Epic, the ID shown is the EPI; otherwise it's the MRN, chosen by identifier period. A race extension can add a drug factor, except at one named institution that has opted out.</li>
+    <li><strong>Match existing cases.</strong> <code>POST /database/databridge/case_summary</code> with name, ID and birthday. The backend returns only exact matches.</li>
+    <li><strong>Choose.</strong> The wizard offers three paths:
+      <ul>
+        <li><strong>New case:</strong> Define Filters (drug, route, timeline; quick picks from 24 h to 30 d), then fetch FHIR.</li>
+        <li><strong>Load an existing case:</strong> <code>/cases/load_case</code> only.</li>
+        <li><strong>Sync:</strong> fetch over a new timeline, then compare each SCr, CrCl, dose and level entry as current, incoming or matched.</li>
+      </ul>
+    </li>
+    <li><strong>Fetch.</strong> Vitals (height, weight), SCr, CrCl and drug levels as <code>Observation</code>s, filtered by LOINC codes from <code>/ehr/drug-codes</code>. For doses:
+      <ul>
+        <li><strong>Epic:</strong> <code>MedicationRequest</code>, then the private MAR API for the matching orders.</li>
+        <li><strong>Oracle Health:</strong> <code>MedicationAdministration?status=completed</code>.</li>
+      </ul>
+      Pagination follows every <code>next</code> link, and the timeline can reach back to 2000-01-01.
+    </li>
+    <li><strong>Format.</strong> <code>POST /databridge/ehr/format-data</code> returns a Redux-shaped case, which the pharmacist reviews in two steps (patient information, then medical information), with per-row checkboxes.</li>
+    <li><strong>Complete import.</strong> Keeps only the checked rows, runs drug information, default settings, PK, renal parameters and AKI assessment (RX-3639), then navigates to <code>/patient-info</code>.</li>
+  </ol>
+  <h5>Things to know</h5>
+  <ul>
+    <li><strong>CrCl field name.</strong> Epic parses CrCl into <code>level</code>, while Oracle Health and the UI use <code>value</code>. This is correct only if Databridge maps the Epic field.</li>
+    <li><strong>Private API URL.</strong> The Epic private-API URL gets a double slash (<code>…/api//epic/2014/…</code>), and it breaks if the issuer doesn't end exactly in <code>/FHIR/R4</code>.</li>
+    <li><strong>Route codes.</strong> Only vancomycin has route codes. Other drugs import only when their route text contains "Intravenous".</li>
+    <li><strong>Idle logout.</strong> EHR users are logged out on idle with no prompt.</li>
+    <li><strong>Test coverage.</strong> No tests cover <code>EpicActions</code>, <code>OracleHealthActions</code>, <code>EHRActions</code>, the medication parsers, or the wizard's filter and sync steps. Every component fixture is a Sentri7 store.</li>
+  </ul>
+
+  <h3 id="fe-login">Sign-in screens</h3>
+  <ul>
+    <li><code>LoginWrapper</code> serves <code>/login</code>, <code>/sso-login</code> and <code>/forgot-password</code>. On mount it checks <code>/auth/status</code>. If signed in, it shows "existing session"; otherwise it resets Redux and clears the EHR and Datadog cookies.</li>
+    <li><strong>First sign-in.</strong> An invited user sets their name, phone and a new password, sent to <code>/auth/sign-up</code> with the Cognito session.</li>
+    <li><strong>Forgot password.</strong> It always moves on to the code step, even when the request failed.</li>
+    <li><strong>Logout for EHR users.</strong> Logout doesn't sign EHR users out; it restarts the EHR import instead.</li>
+    <li><strong>Sentri7 simulator.</strong> <code>/external-platform-workflow</code> is a fake Sentri7 screen that posts synthetic cases to a hard-coded import URL. It's routed in production.</li>
+  </ul>
+
+  <h3 id="fe-shell">App shell and shared components</h3>
+  <ul>
+    <li><strong>Top bar.</strong> <code>MainNavigation</code> is the fixed top bar: app switcher, logo, navigation links (disabled while the case is invalid), and the Alerts, Notes, Save, Settings and Account icons.</li>
+    <li><strong>Error handling.</strong> <code>ErrorBoundary</code> logs to Datadog and <code>/logs/errors</code>, then checks versions. <code>ConnectionFailed</code> is the reconnect overlay. <code>InvalidEpSession</code> appears after an EHR user refreshes the page.</li>
+    <li><strong>Shared building blocks</strong> (<span class="path">src/components/Shared/</span>):
+      <ul>
+        <li>a <code>react-table</code> wrapper with search, sort and cursor pagination</li>
+        <li>cross-browser date and time inputs</li>
+        <li>dropdowns and multi-selects</li>
+        <li>the KaTeX <code>Latex</code> component and the <code>Citation</code> popover</li>
+        <li>report preview and export</li>
+        <li>settings panels shared by user and admin</li>
+        <li>warning modals</li>
+        <li>the "what's new" carousel</li>
+      </ul>
+    </li>
+    <li><strong><code>GlobalVariables.ts</code>.</strong> 807 lines, imported by 229 files. It holds colours, date formats, cookie names, PK bounds and descriptions, value ranges, unit options, SSO provider lists per environment, and target definitions. Its <code>ISO_8601_STRING</code> format uses <code>sss</code>, which isn't a millisecond token in dayjs, so seconds print twice.</li>
+  </ul>
+</section>
+
+<section class="doc" id="fe-tests" data-group="Frontend (PreciseRx-Web)" data-title="Frontend tests">
+  <header>
+    <p class="eyebrow"><span>PreciseRx-Web</span><span>Vitest 4 · Testing Library · MSW 2</span></p>
+    <h2>Frontend tests</h2>
+    <p class="summary">About 124 files and about 734 cases, run with <code>pnpm test</code>. HTTP is mocked with MSW handlers against <code>http://localhost/{service}/{lane}/…</code>, and component tests render with a real store preloaded from JSON snapshots.</p>
+  </header>
+  <ul>
+    <li><strong>Setup.</strong> <span class="path">src/setupTests.ts</span> uses jsdom, sets the timezone to America/Los_Angeles, starts the MSW server and stubs a few browser APIs. <span class="path">src/utils/tests/TestsUtility.tsx</span> provides a <code>render</code> that wraps i18n, the router and an error boundary around a real store.</li>
+    <li><strong>How to run.</strong> <code>pnpm test</code> watches locally and runs once in CI. <code>pnpm test -- --run</code> runs once. <code>pnpm test -- --run --coverage</code> adds v8 coverage, with no threshold set.</li>
+    <li><strong>Best covered.</strong> IAM (~115 cases), Login (~57), Settings (~53), R4 patient parsing (~49), <code>ValidationLibrary</code> (45).</li>
+    <li><strong>Not covered.</strong>
+      <ul>
+        <li><code>SaveContainer</code>, <code>saveCase</code> and the PUT/PATCH choice. That is why the failed-save bug above went unnoticed.</li>
+        <li>Autosave outside the EHR page, <code>loadPatientCase</code>, and the <code>fitAndPlot</code> response mapping.</li>
+        <li>The D3 graph, reports, notes and archive.</li>
+        <li>The Model Analytics socket flow and <code>calculateStatistics</code>.</li>
+        <li>The admin protocol manager (639 lines).</li>
+        <li>The EHR fetchers.</li>
+      </ul>
+    </li>
+    <li><strong>Mock mismatch.</strong> The MSW mock for <code>/auth/logout</code> is a GET; the app sends POST.</li>
+  </ul>
+</section>

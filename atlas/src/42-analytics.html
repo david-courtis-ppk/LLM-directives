@@ -1,0 +1,120 @@
+
+<section class="doc" id="analytics" data-group="Backend services" data-title="Analytics">
+  <header>
+    <p class="eyebrow"><span>src/apis/PreciseRx-Analytics</span><span>JavaScript</span><span>Express 4 · socket.io 4</span><span>/analysis/v1</span></p>
+    <h2>PreciseRx-Analytics</h2>
+    <p class="summary">Analytics turns stored cases into institution-level reports. It is not on the live dosing path. Its most involved feature, Model Analytics, is a back-test. For historical cases it re-predicts a measured level from the levels before it, once with the population prior and once with the fitted posterior, so accuracy can be compared.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Processes</dt><dd>Server + SQS worker</dd></div>
+    <div><dt>Realtime</dt><dd>socket.io 4.8, polling only, Redis adapter</dd></div>
+    <div><dt>Queue</dt><dd>AWS SQS, woken by Redis pub/sub</dd></div>
+    <div><dt>CPU work</dt><dd>workerpool threads in the worker</dd></div>
+    <div><dt>Cache</dt><dd>ioredis to Valkey, redlock</dd></div>
+    <div><dt>Local</dt><dd>Analytics-Server :8003, Analytics-Worker</dd></div>
+    <div><dt>Tests</dt><dd>15 Jest files, ~106 cases</dd></div>
+  </dl>
+
+  <h3 id="an-features">Three features</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Feature</th><th>What it computes</th><th>Code</th></tr></thead>
+    <tbody>
+      <tr><td>Model Analytics</td><td>Up to 100 random cases that match the filters. For each, the <var>N</var>-th level is predicted from the earlier ones, with both the prior and the posterior. Results go back over the socket.</td><td class="path">controllers/serum-analysis/, workers/predict-serum-level/</td></tr>
+      <tr><td>Therapeutic status</td><td>Percent of cases therapeutic, sub-therapeutic or supra-therapeutic; time in range; box-plot statistics by time and dose; first-dose efficacy; per-case assessments; a patient summary.</td><td class="path">controllers/therapeutic-status/, utils/statistic-utils.js</td></tr>
+      <tr><td>AKI analysis</td><td>Thin pass-throughs to Database: event and patient counts, lists, SCr history. The router is marked for refactor or removal.</td><td class="path">controllers/aki-analysis/</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="an-flow">The back-test job flow</h3>
+  <pre class="mermaid">
+sequenceDiagram
+  participant B as Browser
+  participant S as Analytics server
+  participant D as Database API
+  participant R as Valkey
+  participant Q as SQS
+  participant W as Worker threads
+  B->>S: connect /socketio namespace /serum-analysis (cookie auth at handshake)
+  B->>S: serum:prepare {filters, level}
+  S->>D: POST /analytics/serum/predictions
+  D-->>S: up to 100 levels to predict
+  S->>R: read cached job_ hashes, store graph_ hash, join room
+  S-->>B: message {graphHash, jobsData}
+  B->>S: serum:calculate {graphHash, jobsData}
+  S->>D: POST /cases for jobs not yet done
+  S->>R: HMSET job_ status in-progress, inputs = full case (under redlock)
+  S->>Q: SendMessageBatch of 3, body {id, version_hash}
+  S->>R: PUBLISH priority_analytics
+  R-->>W: wake up
+  W->>Q: ReceiveMessage (up to 5, 15 s long poll)
+  W->>R: HGETALL job_id, compare version_hash
+  W->>W: default_fitting_settings, calculate_pk, fit, predict_level twice
+  W->>Q: DeleteMessage
+  W->>R: PUBLISH serum:notify_completed_jobs {job, level}
+  R-->>S: completion
+  S->>R: status complete, store predicted level
+  S-->>B: intended serum:completed_job to waiting rooms
+  </pre>
+  <div class="note crit"><span class="label">What actually happens at the last step</span><p><code>getGraphHashList</code> awaits <code>SMEMBERS</code> but never returns the result (<span class="path">src/utils/redis-utils.js:128-130</span>). The completion handler always sees <code>undefined</code> and takes its fallback. The fallback emits <code>serum:failed_job {level}</code> to the whole <code>/serum-analysis</code> namespace, and returns before setting the 24-hour TTL (<span class="path">controllers/serum-analysis/on-completed-serum-job.js:57-65</span>). The Redis adapter relays it to every server instance, so every connected Model Analytics user, in every institution, receives every finished job, labelled as a failure. Each <code>level</code> carries the case number, serum-level ID, drug model, observed concentration and predictions, but no names (<span class="path">PreciseRx-Database/…/get_serumpredictions.py:71-80</span>).</p></div>
+  <p>Fixing only the missing <code>return</code> is not enough. <code>serum:calculate</code> joins whatever <code>graphHash</code> the client sends (<span class="path">calculate.js:236</span>). The hash is also predictable, because <code>filters</code> (an object) is interpolated into a string as <code>[object Object]</code> (<span class="path">hash-utils.js:53</span>). A safer design derives the room from the verified user.</p>
+
+  <h3 id="an-keys">Redis keys</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Key</th><th>Holds</th><th>Expiry</th></tr></thead>
+    <tbody>
+      <tr><td><code>job_&lt;uuid&gt;</code></td><td>Status, level, <code>version_hash</code> (the case's last-saved time), license, and <code>inputs</code>, the full case object.</td><td>Meant to be 24 h, but never set because of the bug above.</td></tr>
+      <tr><td><code>graph_&lt;uuid&gt;</code></td><td>One user's <code>{filters, level}</code>.</td><td>None.</td></tr>
+      <tr><td><code>graph_hash_keys_&lt;uuid&gt;</code></td><td>The set of rooms waiting on a job.</td><td>Meant to be 24 h.</td></tr>
+      <tr><td><code>case_&lt;uuid&gt;</code></td><td>Cached case data. The write key uses <code>[object Object]</code>, so the cache never hits.</td><td>None.</td></tr>
+      <tr><td><code>lock:&lt;jobId&gt;</code></td><td>Redlock lock.</td><td>10 s.</td></tr>
+      <tr><td><code>revoked:user:&lt;sub&gt;</code></td><td>Revocation flag written by Main, read here.</td><td>1 h.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="an-routes">Routes and events</h3>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Method or event</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill get">GET</span></td><td><code>/HealthCheck</code></td><td>Returns 200 without checking Redis.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/aki-analysis/{events-count, patients-list, cases-list, patients-count, quick-view, scr-history}</code></td><td>Pass-throughs to Database <code>/analytics/aki/*</code>.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/therapeutic-status/analysis</code></td><td>Population statistics over evaluated cases.</td></tr>
+      <tr><td><span class="pill post">POST</span></td><td><code>/therapeutic-status/assessment</code></td><td>Runs PK assessments on a client-supplied case and saves them. It always returns 200, even on 401 or 403 from Database.</td></tr>
+      <tr><td><span class="pill get">GET</span></td><td><code>/therapeutic-status/patients/cases/:caseNum/summary</code></td><td>Loads a case and runs fit, target and assessment on the main thread. Returns patient info including names.</td></tr>
+      <tr><td>client → server</td><td><code>serum:prepare</code>, <code>serum:calculate</code>, <code>serum:monitor</code></td><td>Start a view, create and enqueue jobs, echo statuses. <code>monitor</code> echoes the client's own statuses back instead of reading Redis, and re-wakes every worker.</td></tr>
+      <tr><td>server → client</td><td><code>message</code>, <code>serum:created_jobs</code>, <code>serum:completed_job</code>, <code>serum:failed_job</code></td><td>See the flow above.</td></tr>
+    </tbody>
+  </table></div>
+  <p><strong>HTTP auth.</strong> Every HTTP route except <code>/HealthCheck</code> runs the standard chain: both tokens, pairing, revocation, then admin-or-user. A limit of 120 requests per minute per IP covers everything.</p>
+  <p><strong>Socket auth.</strong> Sockets are checked only at the handshake: both tokens, pairing and revocation, but no role. After that the connection keeps working when the token expires or the user is revoked, and there is no payload validation or rate limit.</p>
+
+  <h3 id="an-worker">The worker</h3>
+  <ul>
+    <li><strong>Entry and threads.</strong> The entry point is <span class="path">src/workers/predict-serum-level/src/index.js</span>. It runs a workerpool of <code>worker.js</code> threads, one fewer than the CPU count by default.</li>
+    <li><strong>How it runs.</strong> It has no HTTP listener and no health signal. It polls SQS only when a <code>priority_analytics</code> message arrives.</li>
+    <li><strong>Settings.</strong> It uses a hard-coded <code>standardizedSettings</code> object rather than the institution's settings (<span class="path">worker.js:11-43</span>).</li>
+    <li><strong>Outlier check.</strong> Any prediction ≤ 0.5 or ≥ 35 is rejected as an outlier, for every drug.</li>
+    <li><strong>Error checks.</strong> With PK-Library 1.6.1, the checks for an empty fit result can't fire, because <code>{}</code> is truthy (<span class="path">worker.js:80, 105</span>).</li>
+    <li><strong>Unhandled rejections.</strong> The completion and failure publishers aren't awaited. A failed <code>DeleteMessage</code> becomes an unhandled rejection, which crashes Node 24 by default.</li>
+    <li><strong>Redelivery.</strong> When the job hash is missing or its version has changed, the message is never deleted, so SQS redelivers it every 60 s.</li>
+    <li><strong>Env vars.</strong> It needs every server env var at boot, because it shares <code>env.js</code>.</li>
+  </ul>
+
+  <h3 id="an-build">Tests and build</h3>
+  <ul>
+    <li>Jest 30 in <code>test/</code>, mirroring <code>src/</code>. There are no tests for the socket listeners, completion handlers, worker, <code>redis-utils</code>, SQS, or the therapeutic controllers. That is why the key bugs above went unnoticed.</li>
+    <li><code>hash-utils.test.js</code> stubs <code>uuid</code>, which is ESM-only in version 13, so real key derivation is never exercised.</li>
+    <li>Four Jenkinsfiles build the server and worker images for production and staging. They run no tests and have no deploy step.</li>
+  </ul>
+  <h5>Recent commits on main</h5>
+  <div class="tbl compact"><table>
+    <thead><tr><th>Commit</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>a3ffc2f</code></td><td>Reverted the second CORS origin (RX-3660).</td></tr>
+      <tr><td><code>ff46f7a</code></td><td>Stopped seeding cache keys with the frontend URL (RX-3662).</td></tr>
+      <tr><td><code>adb99fd</code></td><td>Fixed cookie parsing and moved auth into Shared-JS (RX-3576).</td></tr>
+      <tr><td><code>ea5627a</code></td><td>Rejects mismatched token pairs (RX-3606).</td></tr>
+      <tr><td><code>9bed1c2</code></td><td>Token revocation on HTTP and sockets (RX-3302).</td></tr>
+      <tr><td><code>9b9d4b8</code></td><td>Split the production worker build (RX-3521).</td></tr>
+    </tbody>
+  </table></div>
+</section>

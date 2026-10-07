@@ -1,0 +1,167 @@
+
+<section class="doc" id="overview" data-group="Start here" data-title="What PrecisePK is">
+  <header>
+    <p class="eyebrow"><span>Start here</span><span>Orientation</span></p>
+    <h2>What PrecisePK is</h2>
+    <p class="summary">PrecisePK is clinical dosing software. A pharmacist enters a patient, a drug, the doses given and the blood levels measured. The software estimates that patient's own pharmacokinetics and recommends a regimen that reaches a target such as an AUC or a trough.</p>
+  </header>
+  <p>Three ideas carry most of the codebase:</p>
+  <ul>
+    <li><strong>Population model.</strong> A published study (for example Rodvold 1988 for vancomycin) predicts a typical patient's clearance and volume from covariates such as creatinine clearance and weight. This prediction is the <em>prior</em>.</li>
+    <li><strong>Bayesian fit.</strong> When measured levels exist, the engine moves the parameters away from the prior until predicted levels match measured ones, weighing both. The result is the <em>posterior</em> (the individual estimate).</li>
+    <li><strong>Target search.</strong> With prior or posterior parameters in hand, the engine simulates candidate regimens and picks the dose, interval and infusion time that hit the target.</li>
+  </ul>
+  <p>All of that maths lives in one C++ library, <a href="#pk-library">PK-Library</a>. Everything else stores cases, signs people in, connects to hospital EHRs, draws the charts, or reports on populations.</p>
+
+  <div class="note info"><span class="label">Lives outside these repositories</span><p>ECS task and service definitions, IAM policies, the production MySQL schema (DDL), Amplify console settings, and Datadog configuration.</p></div>
+</section>
+
+<section class="doc" id="architecture" data-group="Start here" data-title="System map">
+  <header>
+    <p class="eyebrow"><span>Start here</span><span>Architecture</span></p>
+    <h2>System map</h2>
+    <p class="summary">One browser app, one gateway, five services. Three of the services load the C++ engine inside their own process, and one of them owns all stored patient data.</p>
+  </header>
+  <figure class="diagram">
+    <div class="canvas">
+      <svg viewBox="0 0 1000 520" role="img" aria-label="The browser and the EHRs both reach a gateway, which routes by path to five services: Main, Analytics, Databridge, Database and GenAI. Main, Analytics and Databridge call Database with the user's cookies and load PK-Library in-process. Database talks to MySQL, GenAI to OpenAI. Valkey and Cognito are shared by all services.">
+        <defs>
+          <marker id="ah-arch" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <!-- row 1 -->
+        <rect class="svg-box-accent" x="40" y="20" width="320" height="58" rx="4"/>
+        <text class="svg-tb" x="56" y="44">Browser · PreciseRx-Web</text>
+        <text class="svg-ts" x="56" y="64">React single-page app, hosted on AWS Amplify</text>
+        <rect class="svg-box" x="640" y="20" width="320" height="58" rx="4"/>
+        <text class="svg-tb" x="656" y="44">EHRs and partners</text>
+        <text class="svg-ts" x="656" y="64">Epic · Oracle Health (SMART on FHIR) · Sentri7</text>
+        <line class="svg-dash" x1="362" y1="49" x2="636" y2="49" marker-end="url(#ah-arch)"/>
+        <text class="svg-tm" x="499" y="41" text-anchor="middle">FHIR reads, straight from the browser</text>
+        <!-- gateway -->
+        <rect class="svg-band" x="40" y="128" width="920" height="42" rx="4"/>
+        <text class="svg-tb" x="56" y="154">Gateway</text>
+        <text class="svg-ts" x="130" y="154">nginx on :80 locally · WAF → API Gateway → VPC Link → internal ALB in AWS (per code comments)</text>
+        <line class="svg-line" x1="200" y1="78" x2="200" y2="126" marker-end="url(#ah-arch)"/>
+        <text class="svg-tm" x="208" y="107">HTTPS + Cognito cookies</text>
+        <line class="svg-line" x1="800" y1="78" x2="800" y2="126" marker-end="url(#ah-arch)"/>
+        <text class="svg-tm" x="792" y="107" text-anchor="end">SMART launch · OAuth callback · Sentri7 push</text>
+        <!-- services -->
+        <g>
+          <rect class="svg-box" x="40" y="222" width="168" height="84" rx="4"/>
+          <text class="svg-tb" x="54" y="246">Main</text>
+          <text class="svg-ts" x="54" y="264">Node · Express</text>
+          <text class="svg-ts" x="54" y="280">dosing maths, sign-in, IAM</text>
+          <rect class="svg-chip" x="54" y="287" width="76" height="14" rx="2"/><text class="svg-ta" x="59" y="298">PK-Library</text>
+
+          <rect class="svg-box" x="228" y="222" width="168" height="84" rx="4"/>
+          <text class="svg-tb" x="242" y="246">Analytics</text>
+          <text class="svg-ts" x="242" y="264">Node · socket.io</text>
+          <text class="svg-ts" x="242" y="280">reports, back-test worker</text>
+          <rect class="svg-chip" x="242" y="287" width="76" height="14" rx="2"/><text class="svg-ta" x="247" y="298">PK-Library</text>
+
+          <rect class="svg-box" x="416" y="222" width="168" height="84" rx="4"/>
+          <text class="svg-tb" x="430" y="246">Databridge</text>
+          <text class="svg-ts" x="430" y="264">Node · Express</text>
+          <text class="svg-ts" x="430" y="280">EHR launch, import mapping</text>
+          <rect class="svg-chip" x="430" y="287" width="76" height="14" rx="2"/><text class="svg-ta" x="435" y="298">PK-Library</text>
+
+          <rect class="svg-box" x="604" y="222" width="168" height="84" rx="4"/>
+          <text class="svg-tb" x="618" y="246">Database</text>
+          <text class="svg-ts" x="618" y="264">Python · Flask</text>
+          <text class="svg-ts" x="618" y="280">patients, cases, audit</text>
+
+          <rect class="svg-box" x="792" y="222" width="168" height="84" rx="4"/>
+          <text class="svg-tb" x="806" y="246">GenAI</text>
+          <text class="svg-ts" x="806" y="264">Python · FastAPI</text>
+          <text class="svg-ts" x="806" y="280">LLM assistant</text>
+        </g>
+        <g>
+          <line class="svg-line" x1="124" y1="170" x2="124" y2="220" marker-end="url(#ah-arch)"/><text class="svg-tm" x="130" y="200">/main/v1</text>
+          <line class="svg-line" x1="312" y1="170" x2="312" y2="220" marker-end="url(#ah-arch)"/><text class="svg-tm" x="318" y="200">/analysis/v1</text>
+          <line class="svg-line" x1="500" y1="170" x2="500" y2="220" marker-end="url(#ah-arch)"/><text class="svg-tm" x="506" y="200">/databridge/v1</text>
+          <line class="svg-line" x1="688" y1="170" x2="688" y2="220" marker-end="url(#ah-arch)"/><text class="svg-tm" x="694" y="200">/database/v1</text>
+          <line class="svg-line" x1="876" y1="170" x2="876" y2="220" marker-end="url(#ah-arch)"/><text class="svg-tm" x="882" y="200">/gen-ai/v1</text>
+        </g>
+        <!-- service to database bus -->
+        <polyline class="svg-line-accent" points="124,306 124,336 650,336 650,310" marker-end="url(#ah-arch)" style="color:var(--accent)"/>
+        <line class="svg-line-accent" x1="312" y1="306" x2="312" y2="336"/>
+        <line class="svg-line-accent" x1="500" y1="306" x2="500" y2="336"/>
+        <text class="svg-ta" x="136" y="354">service → Database: the user's cookies are forwarded; Databridge's EHR routes use x-api-key</text>
+        <!-- data stores -->
+        <line class="svg-line" x1="730" y1="306" x2="730" y2="374" marker-end="url(#ah-arch)"/>
+        <rect class="svg-box" x="604" y="376" width="168" height="50" rx="4"/>
+        <text class="svg-tb" x="618" y="398">MySQL (Aurora)</text>
+        <text class="svg-ts" x="618" y="415">one schema per institution</text>
+        <line class="svg-line" x1="876" y1="306" x2="876" y2="374" marker-end="url(#ah-arch)"/>
+        <rect class="svg-box" x="792" y="376" width="168" height="50" rx="4"/>
+        <text class="svg-tb" x="806" y="398">OpenAI API</text>
+        <text class="svg-ts" x="806" y="415">model provider</text>
+        <line class="svg-line" x1="372" y1="306" x2="372" y2="374" marker-end="url(#ah-arch)" />
+        <rect class="svg-box" x="228" y="376" width="168" height="50" rx="4"/>
+        <text class="svg-tb" x="242" y="398">AWS SQS → worker</text>
+        <text class="svg-ts" x="242" y="415">back-test jobs</text>
+        <!-- shared -->
+        <rect class="svg-band" x="40" y="452" width="560" height="52" rx="4"/>
+        <text class="svg-tb" x="56" y="474">Valkey (Redis)</text>
+        <text class="svg-ts" x="56" y="492">revocation flags (Main writes, every service reads) · Analytics job state · Databridge EHR sessions</text>
+        <rect class="svg-band" x="620" y="452" width="340" height="52" rx="4"/>
+        <text class="svg-tb" x="636" y="474">Cognito · 6 user pools</text>
+        <text class="svg-ts" x="636" y="492">every service verifies tokens against them</text>
+      </svg>
+    </div>
+    <figcaption>Who talks to whom. Arrows are requests. A <span class="mono" style="color:var(--accent-ink)">PK-Library</span> chip marks a service that loads the C++ engine inside its own process, with no network hop. The bottom row is infrastructure shared by every service. The Analytics server puts jobs on SQS, and a separate worker process takes them off and runs the engine.</figcaption>
+  </figure>
+
+  <h3 id="repo-map">Repository map</h3>
+  <p>The frontend is its own repository. Everything else sits as git submodules inside the <code>PreciseRx-Web-PK</code> umbrella.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Repository</th><th>Path in umbrella</th><th>Language</th><th>What it does</th><th class="num">Files</th><th>Local</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#fe-platform">PreciseRx-Web</a></td><td class="path">separate repo</td><td>TypeScript, React 18</td><td>The web app clinicians use.</td><td class="num">1,329</td><td class="nw">Vite dev server</td></tr>
+      <tr><td><a href="#local-dev">PreciseRx-Web-PK</a></td><td class="path">(root)</td><td>Make, Docker, nginx</td><td>Umbrella repo that runs the whole backend locally.</td><td class="num">44</td><td class="nw">:80 gateway</td></tr>
+      <tr><td><a href="#main">PreciseRx-Main</a></td><td class="path">src/apis/PreciseRx-Main</td><td>JavaScript, Express 4</td><td>Dosing calculations, sign-in, user administration.</td><td class="num">188</td><td class="nw">:8000</td></tr>
+      <tr><td><a href="#database">PreciseRx-Database</a></td><td class="path">src/apis/PreciseRx-Database</td><td>Python, Flask 3</td><td>All stored patient and case data, settings, licenses.</td><td class="num">267</td><td class="nw">:8001</td></tr>
+      <tr><td><a href="#databridge">PreciseRx-Databridge</a></td><td class="path">src/apis/PreciseRx-Databridge</td><td>JavaScript, Express 4</td><td>EHR launches and mapping imported data into a case.</td><td class="num">146</td><td class="nw">:8002</td></tr>
+      <tr><td><a href="#analytics">PreciseRx-Analytics</a></td><td class="path">src/apis/PreciseRx-Analytics</td><td>JavaScript, Express 4</td><td>Population reports and a model-accuracy back-test.</td><td class="num">89</td><td class="nw">:8003</td></tr>
+      <tr><td><a href="#genai">PreciseRx-GenAI</a></td><td class="path">src/apis/PreciseRx-GenAI</td><td>Python, FastAPI</td><td>LLM assistant (proof of concept on <code>main</code>).</td><td class="num">41</td><td class="nw">:8004</td></tr>
+      <tr><td><a href="#pk-library">PK-Library</a></td><td class="path">src/packages/cpp/PK-Library</td><td>C++20</td><td>The pharmacokinetic engine, shipped as a Node addon.</td><td class="num">680</td><td class="nw">linked in</td></tr>
+      <tr><td><a href="#shared-js">PreciseRx-Shared-JS</a></td><td class="path">src/packages/node/PreciseRx-Shared-JS</td><td>TypeScript</td><td>Auth, cookies, logging and errors for the Node services.</td><td class="num">94</td><td class="nw">linked in</td></tr>
+      <tr><td><a href="#shared-python">PreciseRx-Shared-Python</a></td><td class="path">src/packages/python/PreciseRx-Shared-Python</td><td>Python</td><td>Error classes and a Flask error handler.</td><td class="num">26</td><td class="nw">installed</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="lifecycle">One request, end to end</h3>
+  <p>A dose recommendation is the most typical request. It shows the middleware every Node service shares and where the engine is called. from <span class="path">PreciseRx-Main/src/controllers/index.js:54-89</span> and <span class="path">prediction/dose/post-output.js:28-43</span>; the handler lines are</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant B as Browser
+  participant G as Gateway
+  participant M as Main
+  participant V as Valkey
+  participant P as PK-Library
+  B->>G: POST /main/v1/prediction/dose/output with cookies
+  G->>M: POST /prediction/dose/output
+  M->>M: helmet, CORS, cookie parse, compression
+  M->>M: verify access and id tokens against 6 pools
+  M->>M: both tokens must name the same user
+  M->>V: is revoked:user:sub set? (30 s local cache)
+  M->>M: role check: admin or user
+  M->>M: Joi validation, errors logged but not enforced
+  M->>P: dosage_regimen(patient, drug, settings, pk, target)
+  P-->>M: regimen, or an empty object if the engine threw
+  M-->>B: 200 with the JSON result
+  </pre>
+  <p>The request body carries the whole clinical picture every time: patient, drug, settings, prior and posterior PK parameters, and the target. Main keeps no state between calls.</p>
+
+  <h3 id="reading-order">Suggested reading order</h3>
+  <ol class="steps">
+    <li>How the stack runs locally: the umbrella <code>Makefile</code>, <code>docker-compose.yml</code> and <code>src/services/nginx/conf.d/</code>. See <a href="#local-dev">Local development</a>.</li>
+    <li>The frontend's HTTP layer, <code>src/actions/AxiosRequestWrappers/</code>, to learn how every call is made. See <a href="#fe-platform">Frontend platform</a>.</li>
+    <li>Main's <code>src/controllers/index.js</code> (the middleware order) and one route end to end, such as <code>prediction/dose/post-output.js</code>.</li>
+    <li>PK-Library in this order: <code>src/drug/vancomycin.hpp</code> (model choice), <code>study/vancomycin/vancomycinrodvold1988.hpp</code>, <code>vancomycintdms.hpp</code>, <code>model/model.hpp</code>, <code>bayesianfitting/bayesianfitting.cpp</code>. See <a href="#pk-rodvold">the worked example</a>.</li>
+    <li>The binding's <code>fit_and_plot</code> in <code>bindings/nodejs/pklibraryjs.cpp</code> (about line 1668), which connects JavaScript to the maths.</li>
+    <li>Database's <code>app/__init__.py</code> and <code>app/middlewares/before_requests.py</code>, then <code>app/models/hospital/case.py</code>.</li>
+    <li>Databridge's Epic launch: <code>controllers/ehr/epic/get-launch.js</code> then <code>get-callback.js</code>.</li>
+    <li>Shared-JS <code>src/middleware/CognitoAuth.ts</code> and <code>TokenPairing.ts</code>, which every Node service uses to authenticate.</li>
+  </ol>
+</section>

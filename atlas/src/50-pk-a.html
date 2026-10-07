@@ -1,0 +1,167 @@
+
+<section class="doc" id="pk-library" data-group="Dosing engine" data-title="PK-Library overview">
+  <header>
+    <p class="eyebrow"><span>src/packages/cpp/PK-Library</span><span>C++20</span><span>@preciserx/pk-library-js</span></p>
+    <h2>PK-Library, the dosing engine</h2>
+    <p class="summary">For a patient and a drug, the engine does four things. It estimates population PK parameters from a published study. It fits those parameters to measured levels by Bayesian MAP estimation (the most probable parameters given both the prior and the data). It simulates concentration over time. And it searches for a regimen that hits a target. Main, Analytics and Databridge load it in-process as a native Node addon.</p>
+  </header>
+  <dl class="facts">
+    <div><dt>Language</dt><dd>C++20, no compiler extensions</dd></div>
+    <div><dt>Linear algebra</dt><dd>Eigen (submodule, post-3.4 snapshot)</dd></div>
+    <div><dt>Node binding</dt><dd>node-addon-api 8.8, prebuilt with prebuildify</dd></div>
+    <div><dt>Python binding</dt><dd>pybind11 3.0 (used by GenAI's feature branch)</dd></div>
+    <div><dt>Published version in use</dt><dd><code>1.6.1</code> in all three services</dd></div>
+    <div><dt>Version on <code>main</code></dt><dd><code>1.7.0-rx-3240.0</code> (prerelease)</dd></div>
+    <div><dt>Drugs</dt><dd>28 supported</dd></div>
+    <div><dt>Tests</dt><dd>1,323 GoogleTests (249 disabled), 110 pytest, 4 Jest</dd></div>
+  </dl>
+  <p>Defined in <span class="path">CMakeLists.txt</span>, <span class="path">binding.gyp</span>, <span class="path">package.json</span> and <span class="path">src/drug/drug.cpp:176-207</span>.</p>
+
+  <h3 id="pk-layers">Layers</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Layer</th><th>Folder</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td>Drug</td><td class="path">src/drug/</td><td>One class per drug. It lists the drug's routes, targets per route, patient factors, units, dose rounding, fitting defaults and infusion-time rules. It also chooses the model (<code>models()</code>, <code>models_for_patient()</code>, <code>determine_model()</code>). <code>Drug::init(name)</code> is the factory.</td></tr>
+      <tr><td>Model type</td><td class="path">src/pharmacokinetics/model/</td><td>Abstract structure: <code>OneCompartment</code>, <code>OneCompartmentGeneral</code>, <code>TwoCompartment</code>, <code>ThreeCompartment</code>, <code>NonLinear</code> (Michaelis-Menten), <code>NonLinearTwoCompartment</code>. Also the simulators, <code>BayesParameter</code>, <code>BayesContainer</code> and <code>PKContainer</code>.</td></tr>
+      <tr><td>Study</td><td class="path">src/pharmacokinetics/study/&lt;drug&gt;/</td><td>A concrete model named after its paper. It turns patient covariates into prior values and spreads, and supplies its metadata and citations.</td></tr>
+      <tr><td>Fitting</td><td class="path">…/bayesianfitting/</td><td>Levenberg-Marquardt MAP fitting, the loss functions, and population regression.</td></tr>
+      <tr><td>Graphic analysis</td><td class="path">…/graphicanalysis/</td><td>Dose, level and dialysis histories, plotting, level prediction, and <code>FittingSettings</code>.</td></tr>
+      <tr><td>Steady state</td><td class="path">…/steadystate/</td><td>Steady-state metrics, forecast graphs and confidence ranges.</td></tr>
+      <tr><td>Dose prediction</td><td class="path">…/doseprediction/</td><td><code>DosageRegimen</code> (a proposed regimen) and <code>Nomogram</code> (a 3 × 3 table of interval by infusion time).</td></tr>
+      <tr><td>Therapeutic target</td><td class="path">…/therapeutictarget/</td><td>One class per target type: AUC24, AUIC24, AUC6/12/48/72/96, AUC per dose, trough, trough range, peak, peak and trough, concentration at a time, average concentration, time above MIC.</td></tr>
+      <tr><td>Formulas and patient</td><td class="path">src/formulas/, src/patient/</td><td>BSA, CrCl and eGFR (Cockcroft-Gault, Schwartz, MDRD, CKD-EPI and others), FFM, IBW, LBM. <code>Patient</code> combines body composition, drug factors and the lab report.</td></tr>
+      <tr><td>Settings</td><td class="path">src/settings/</td><td>Institution formula choices and four protocols: peak time, max dose, default target input, infusion time.</td></tr>
+      <tr><td>Units and warnings</td><td class="path">src/utils/units/, src/warning/</td><td>Unit enums and conversions, per-drug unit settings, max-dose and infusion warnings.</td></tr>
+      <tr><td>Bindings</td><td class="path">bindings/nodejs/, bindings/python/</td><td>JavaScript ↔ C++ in four stages: parse into <code>Store::</code> structs, turn them into domain objects (<code>Unravel</code>), compute, then serialize back (<code>Reravel</code>).</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="pk-concepts">The domain objects</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Object</th><th>What it holds</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td><code>Patient</code></td><td>Body composition (age, weight, height, sex, amputations, and derived BSA, IBW, LBM and dosing weight), drug factors (flags such as ICU or haemodialysis, plus covariates) and the lab report (SCr history, CrCl history, other labs).</td><td class="path">src/patient/patient.h:22-25</td></tr>
+      <tr><td><code>BayesParameter</code></td><td><code>{val, sd, citation}</code>. The field called <code>sd</code> is a <strong>relative</strong> SD, i.e. a coefficient of variation. The normal-scale prior penalty divides by <code>prior_sd × prior_val</code>.</td><td class="path">model/bayesparameter.h:8-16</td></tr>
+      <tr><td><code>BayesContainer</code></td><td>F per route, the other fitted parameters, and time-varying adjustments (by datetime, treatment time, infusion time or cycle).</td><td class="path">model/bayescontainer.h:236-248</td></tr>
+      <tr><td><code>PKContainer</code></td><td>The runtime compartments (volumes and rate constants) built from model, patient and parameters, used by the simulators.</td><td class="path">model/pkcontainer.hpp:26</td></tr>
+      <tr><td><code>DosageEntry</code>, <code>LevelEntry</code>, <code>DialysisEntry</code></td><td>History rows: datetime, route, dose, interval, infusion time, number of doses; or datetime and level. They are converted to hours since time zero before fitting.</td><td class="path">graphicanalysis/graphing_entry.h:11-74</td></tr>
+      <tr><td><code>DosageRegimen</code></td><td>Proposed dose, interval, infusion time, loading dose, rate, time until the next dose, and short-course loading and maintenance counts. <code>-1</code> means "not set".</td><td class="path">doseprediction/dosageregimen.h:43-54</td></tr>
+      <tr><td><code>ClinicalContext</code></td><td>Starting level, MIC, treatment time and cycle, the histories, and the time of the next dose.</td><td class="path">model/clinicalcontext.h:13</td></tr>
+    </tbody>
+  </table></div>
+  <p>Every computed value carries a <code>Citation</code>: a LaTeX formula, the variables used and a list of sources. The frontend renders these with KaTeX, which is how clinicians see where each number came from.</p>
+</section>
+
+<section class="doc" id="pk-drugs" data-group="Dosing engine" data-title="Drugs and models">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>src/drug/</span></p>
+    <h2>Drugs and study models</h2>
+    <p class="summary">28 drugs are supported. Most older drugs have a single legacy model named "TDMS", after the original PrecisePK desktop product. Newer drugs offer several published models, and the engine auto-selects one per patient.</p>
+  </header>
+  <div class="tbl"><table>
+    <thead><tr><th>Drug</th><th>Selectable models (structure)</th><th>Routes</th></tr></thead>
+    <tbody>
+      <tr><td>Vancomycin</td><td>1-comp: Adane 2015, Crass 2018, Frymoyer-Stockmann, Le-Stockmann-Frymoyer, Le-Stockmann 2014, Le-Stockmann 2015, Moffett 2019, Stockmann 2019, Buelga 2005. 2-comp: <strong>Rodvold 1988</strong> (general adult default, <span class="path">vancomycin.hpp:322</span>), Caparelli 2001, Westra 2019, Claisse 2019 intermittent, Claisse 2019 continuous, Goti 2018.</td><td>IV intermittent, IV continuous</td></tr>
+      <tr><td>Busulfan</td><td>1-comp: Shukla 2020, Savic 2013, Nava 2008, Trame 2011, Veal 2012, Poinsignon 2020, Castro 2015. 2-comp: McCune 2014 (IV only). Nonlinear: Long-Boyle 2015.</td><td>IV intermittent, oral tablets</td></tr>
+      <tr><td>Linezolid</td><td>1-comp: Abe 2009, Crass 2019, Garcia-Prats 2019, Li 2019, Sasaki 2011, Wang 2021, Alghamdi 2020, Duan 2024, Thibault 2019, Zhou 2022. 2-comp: Tsuji 2017, Yang 2021.</td><td>IV, oral tablets, oral suspension</td></tr>
+      <tr><td>Tacrolimus</td><td>Enabled: Storset 2014, Woillard 2011 (2-comp). <code>set_model</code> can also build Andrew 2018, Zhao 2009, Nanga 2019, Martial 2021 (2-comp) and Zhu 2015, Ji 2018, Wallin 2011, Musuamba 2014, Jalil 2013 (1-comp). Adults only.</td><td>Oral capsules</td></tr>
+      <tr><td>Methotrexate</td><td>Beechinor 2019, Godfrey 1998, Johansson 2011, Jonsson 2011, Kawakatsu 2019, Ruhs 2012 (all 2-comp).</td><td>IV, IV continuous, oral tablets, IM</td></tr>
+      <tr><td>Infliximab</td><td>Fasanmade 2009, Bauman 2020, Fasanmade 2011, Xu 2008 (2-comp); Passot 2016 (1-comp).</td><td>IV intermittent</td></tr>
+      <tr><td>Teicoplanin</td><td>Ogami 2019, Yifan Wang 2025 (2-comp); Qian Sun 2025, Xiao Shan Zhang 2023 (1-comp); Kim 2024 (3-comp).</td><td>IV intermittent</td></tr>
+      <tr><td>Cefepime</td><td>Alvarez 2021, An 2023, Seo 2023 (2-comp); Capparelli 2005, Zhao 2020 (1-comp).</td><td>IV intermittent</td></tr>
+      <tr><td>Cyclosporine</td><td>Saint-Marcoux 2006, Irtan 2007 (2-comp with Erlang transit absorption); Wu 2005 (1-comp).</td><td>Oral capsules, oral liquid</td></tr>
+      <tr><td>Meropenem</td><td>Muro 2011 (1-comp), Crandon 2011 (2-comp), O'Jeanson 2021 (1-comp).</td><td>IV intermittent</td></tr>
+      <tr><td>Adalimumab</td><td>Berends 2018 (1-comp).</td><td>Subcutaneous</td></tr>
+      <tr><td>Carboplatin</td><td>Lindauer 2010 (2-comp; CL depends on infusion time).</td><td>IV intermittent, IV continuous</td></tr>
+      <tr><td>Piperacillin</td><td>Matthew (1-comp).</td><td>IV intermittent, IV continuous</td></tr>
+      <tr><td>Voriconazole</td><td>TDMS (nonlinear 2-comp).</td><td>IV, oral tablets, oral suspension</td></tr>
+      <tr><td>Phenytoin</td><td>TDMS (Michaelis-Menten 1-comp).</td><td>IV, IV continuous, oral capsules, suspension, tablets</td></tr>
+      <tr><td>Amikacin, gentamicin, tobramycin</td><td>Aminoglycoside TDMS (1-comp).</td><td>IV intermittent, IM, IV continuous</td></tr>
+      <tr><td>Ciprofloxacin, levofloxacin/ofloxacin, flucytosine</td><td>TDMS (1-comp).</td><td>IV, oral, IV continuous</td></tr>
+      <tr><td>Digoxin, lithium, phenobarbital, procainamide, quinidine, theophylline, valproic acid</td><td>TDMS (1-comp).</td><td>Drug-specific IV, IM and oral forms</td></tr>
+    </tbody>
+  </table></div>
+  <p>Headers for some models exist but can't be selected:</p>
+  <ul>
+    <li><strong>Vancomycin:</strong> Avedissian 2017, Carreno 2017, Marques 2010, Moffett 2018, Thomson 2009 and Zhao 2014. <code>set_model</code> doesn't build them, and their names redirect to auto-selection (<span class="path">vancomycin.hpp:223-231</span>).</li>
+    <li><strong>Tacrolimus:</strong> the liver-transplant models are disabled for poor performance, yet auto-selection can still return Zhu 2015 for adult liver transplant (<span class="path">tacrolimus.hpp:32-42, 103-105</span>).</li>
+    <li><strong>Not included anywhere:</strong> several cyclosporine models, Linezolid Zhang 2020, and the busulfan examples.</li>
+  </ul>
+  <p>A test-only <code>test_drug</code> is accepted by <code>Drug::init</code> even though it isn't in the supported list (<span class="path">drug.cpp:72</span>).</p>
+</section>
+
+<section class="doc" id="pk-rodvold" data-group="Dosing engine" data-title="Worked example: Rodvold 1988">
+  <header>
+    <p class="eyebrow"><span>PK-Library</span><span>study/vancomycin/vancomycinrodvold1988.hpp</span></p>
+    <h2>Worked example: vancomycin, Rodvold 1988</h2>
+    <p class="summary">Rodvold 1988 is the default vancomycin model for general adults. It is a two-compartment model with two fitted parameters, clearance (CL) and the terminal-phase volume (Vdβ). The file is header-only.</p>
+  </header>
+
+  <h3 id="pk-rodvold-chain">Where each piece comes from</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Class</th><th>What it contributes</th></tr></thead>
+    <tbody>
+      <tr><td><code>VancomycinRodvold1988</code></td><td>The population formulas for CL, Vdβ and Vc; model name, study summary, age and weight ranges, sources; <code>can_fit() = true</code>, which allows local population refitting.</td></tr>
+      <tr><td><code>VancomycinTDMS</code></td><td>Fits <code>VD_BETA</code> and <code>CL</code>. Fixes k21 = 0.46 h⁻¹. Derives β, k12 and the other constants. Builds a time-varying CL multiplier when the patient has more than one CrCl entry. Declares parameter limits that are never applied (see below).</td></tr>
+      <tr><td><code>VancomycinTwoCompartment</code></td><td>F = 1 (RSD 0.05), salt factor 1, and an absorption rate for IM only: 2.7 if age &gt; 75, otherwise 1.9.</td></tr>
+      <tr><td><code>TwoCompartment</code> → <code>LinearModel</code> → <code>Model</code></td><td>The two-compartment closed-form concentration, the dose-from-target maths, and the shared simulation and search machinery.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="pk-rodvold-cl">Clearance prior</h3>
+  <div class="eq">
+    <p class="f"><var>CL</var><sub>pop</sub> = <var>a</var> · <var>CrCl</var>(<var>t</var>) + <var>b</var> · <var>W</var><sub>adj</sub></p>
+    <p class="where">where</p>
+    <dl>
+      <dt>CL<sub>pop</sub></dt><dd>population estimate of the patient's vancomycin clearance, L/h</dd>
+      <dt>CrCl(t)</dt><dd>creatinine clearance in effect at time <var>t</var>, mL/min (<code>patient.crcl_at(datetime)</code>)</dd>
+      <dt>t</dt><dd>the time the estimate is for; CL can differ between dosing intervals when CrCl changes</dd>
+      <dt>W<sub>adj</sub></dt><dd>adjusted body weight, kg</dd>
+      <dt>a</dt><dd>0.79 × 0.06 = 0.0474 (L/h) per (mL/min). 0.79 is the Rodvold 1988 slope of vancomycin CL on CrCl; 0.06 converts mL/min to L/h.</dd>
+      <dt>b</dt><dd>0.05 × 0.06 = 0.003 (L/h) per kg. 0.05 mL/min/kg is non-renal clearance from Rodvold 1989.</dd>
+    </dl>
+    <p class="src">Prior CV 0.5, with the comment <code>// source?</code>. <span class="path">vancomycinrodvold1988.hpp:20-28, 33-66</span></p>
+  </div>
+
+  <h3 id="pk-rodvold-v">Volume prior</h3>
+  <div class="eq">
+    <p class="f"><var>Vd</var><sub>β,pop</sub> = <var>d</var> · <var>W</var><sub>dose</sub> · <var>m</var></p>
+    <p class="where">where</p>
+    <dl>
+      <dt>Vd<sub>β,pop</sub></dt><dd>population estimate of the volume of distribution in the terminal (β) phase, L</dd>
+      <dt>W<sub>dose</sub></dt><dd>dosing weight, kg (the engine chooses actual, ideal or adjusted weight by its own rules)</dd>
+      <dt>d</dt><dd>0.7 L/kg. For adults with CrCl below 10 mL/min it is 1.0 L/kg (Tan 1990), and the ICU factor is not applied.</dd>
+      <dt>m</dt><dd>1.13 if the patient is critically ill or in ICU, otherwise 1</dd>
+    </dl>
+    <p class="src">Prior CV 0.3. <span class="path">vancomycinrodvold1988.hpp:71-98</span>; Tan 1990 branch in <span class="path">vancomycintdms.hpp:149-163</span></p>
+  </div>
+
+  <h3 id="pk-rodvold-derived">Values that are not fitted</h3>
+  <div class="eq">
+    <p class="f"><var>V</var><sub>c</sub> = 0.17 · <var>W</var><sub>dose</sub>   (0.45 · <var>W</var><sub>dose</sub> for adults with CrCl &lt; 10)</p>
+    <p class="f"><var>β</var> = <var>CL</var> / <var>Vd</var><sub>β</sub>    <var>k</var><sub>10</sub> = <var>CL</var> / <var>V</var><sub>c</sub>    <var>k</var><sub>21</sub> = 0.46    <var>α</var> = <var>k</var><sub>10</sub> · <var>k</var><sub>21</sub> / <var>β</var>    <var>k</var><sub>12</sub> = <var>α</var> + <var>β</var> − <var>k</var><sub>21</sub> − <var>k</var><sub>10</sub></p>
+    <p class="where">where</p>
+    <dl>
+      <dt>V<sub>c</sub></dt><dd>volume of the central compartment, L</dd>
+      <dt>CL, Vd<sub>β</sub></dt><dd>the clearance and volume in use: the prior values, or the fitted ones after a fit</dd>
+      <dt>β</dt><dd>slow (terminal) rate constant of the concentration curve, h⁻¹</dd>
+      <dt>α</dt><dd>fast (distribution) rate constant, h⁻¹</dd>
+      <dt>k<sub>10</sub></dt><dd>elimination rate constant from the central compartment, h⁻¹</dd>
+      <dt>k<sub>12</sub>, k<sub>21</sub></dt><dd>transfer rate constants from central to peripheral and back, h⁻¹. k<sub>21</sub> is a constant "calculated using three data sets".</dd>
+    </dl>
+    <p class="src">Vc: <span class="path">vancomycinrodvold1988.hpp:100-149</span>. β, k21, k12: <span class="path">vancomycintdms.hpp:115-147, 194-199</span>. k10 and α come from shared helpers</p>
+  </div>
+  <p>For the sample patient in the header (70 kg, CrCl 100 mL/min), these give CL = 4.95 L/h, Vdβ = 49 L, Vc = 11.9 L, β = 0.101 h⁻¹, k10 = 0.416 h⁻¹, α = 1.89 h⁻¹ and k12 = 1.12 h⁻¹.</p>
+
+  <h3 id="pk-rodvold-limits">Limits that are declared but never applied</h3>
+  <p><code>VancomycinTDMS::fitted_param_constraints</code> would keep β below k21. It sets a floor on Vdβ of 1.01 · CL / k21 and a ceiling on CL of 0.99 · k21 · Vdβ (<span class="path">vancomycintdms.hpp:165-174</span>). Nothing calls <code>fitted_param_constraints</code>, for any model. The base class returns empty maps (<span class="path">model.cpp:49</span>).</p>
+  <p>If a fit drove β above k21 while β stayed below k10, the formula above would make k12 negative. In practice β is far below 0.46 h⁻¹ for most patients, but nothing enforces it.</p>
+
+  <h3 id="pk-rodvold-notes">Details a reader would miss</h3>
+  <ul>
+    <li>CL reads CrCl at each point in time. Vdβ and Vc read only the latest CrCl (<code>patient.crcl()</code>), including for the CrCl &lt; 10 switch. So a patient whose kidneys recover gets a time-varying CL but the latest-CrCl volumes throughout.</li>
+    <li>Lines 35-38 read <code>age</code>, <code>weight</code> and <code>scr</code>, and none of them is used.</li>
+    <li>Line 54 asks "Are these sources even used??" about nine of the citations attached to CL. Those citations are shown to clinicians.</li>
+    <li>A patient with two or more CrCl entries has a time-varying CL. That turns off the closed-form shortcut, so every prediction for that patient is simulated numerically (see <a href="#pk-simulate">Simulation</a>).</li>
+  </ul>
+</section>
